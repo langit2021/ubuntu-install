@@ -202,22 +202,30 @@ echo "[OK] MariaDB installed"
 echo
 
 # ------------------------------------------------------------
-# 7.1 Secure MariaDB & Generate Root Password
+# 7.1 Secure MariaDB & Generate Passwords
 # ------------------------------------------------------------
 
-echo "==> Securing MariaDB & setting root password..."
+echo "==> Securing MariaDB & setting passwords..."
 
+# 生成 16 位高強度密碼
 MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+PMA_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
 
+# 設定 Root 密碼並預先建立 phpmyadmin 控制帳號與資料庫
 sudo mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${MYSQL_ROOT_PASS}');
 DELETE FROM mysql.user WHERE User='';
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+
+CREATE DATABASE IF NOT EXISTS phpmyadmin;
+CREATE USER IF NOT EXISTS 'phpmyadmin'@'localhost' IDENTIFIED VIA mysql_native_password BY '${PMA_PASS}';
+GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
+
 FLUSH PRIVILEGES;
 EOF
 
-echo "[OK] MariaDB secured. Root password generated."
+echo "[OK] MariaDB secured. Root and phpMyAdmin accounts prepared."
 echo
 
 # ------------------------------------------------------------
@@ -227,28 +235,32 @@ echo
 echo "==> Installing phpMyAdmin..."
 
 export DEBIAN_FRONTEND=noninteractive
-echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
-echo "phpmyadmin phpmyadmin/app-password-confirm password " | debconf-set-selections
+# 關鍵：關閉 dbconfig-install 自動配置，避免安裝過程嘗試用無密碼存取 MariaDB
+echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections
 echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
 apt-get install -y phpmyadmin
 
-# 修復 phpMyAdmin 儲存空間與 phpmyadmin 控制帳號權限
-PMA_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
-
-sudo mysql <<EOF
-CREATE DATABASE IF NOT EXISTS phpmyadmin;
-ALTER USER 'phpmyadmin'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${PMA_PASS}');
-GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
-FLUSH PRIVILEGES;
-EOF
-
+# 匯入 phpMyAdmin 控制資料表
 if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
     sudo mysql phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql
 fi
 
-# 寫入正確控制密碼至 phpmyadmin 設定檔
-sed -i "s/\$dbpass=.*/\$dbpass='${PMA_PASS}';/" /etc/phpmyadmin/config-db.php
+# 手動寫入正確的 dbconfig 給 phpMyAdmin 讀取
+cat > /etc/phpmyadmin/config-db.php <<EOF
+<?php
+\$dbuser='phpmyadmin';
+\$dbpass='${PMA_PASS}';
+\$basepath='';
+\$dbname='phpmyadmin';
+\$dbserver='localhost';
+\$dbport='3306';
+\$dbtype='mysql';
+EOF
 
+chmod 660 /etc/phpmyadmin/config-db.php
+chown root:www-data /etc/phpmyadmin/config-db.php
+
+# 建立 Web 連結
 if [ -d /usr/share/phpmyadmin ]; then
     if [ ! -e /var/www/html/phpmyadmin ]; then
         ln -s /usr/share/phpmyadmin /var/www/html/phpmyadmin
@@ -257,7 +269,7 @@ fi
 
 systemctl restart apache2
 
-echo "[OK] phpMyAdmin installed & configured"
+echo "[OK] phpMyAdmin installed & configured successfully"
 echo
 
 # ------------------------------------------------------------
