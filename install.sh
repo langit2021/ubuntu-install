@@ -8,9 +8,6 @@ echo "================================"
 
 echo "Hello World  pc 2.0"
 
-
-
-#!/usr/bin/env bash
 #set -e
 
 echo "=== [1/5] 設定系統時區為 Asia/Taipei ==="
