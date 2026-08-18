@@ -18,7 +18,7 @@ echo "=== [2/5] 透過 HTTP 標頭強制同步時間（繞過 NTP 防火牆限�
 HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | cut -d' ' -f2-)
 if [ -n "$HTTP_DATE" ]; then
     date -s "$HTTP_DATE"
-    hwclock --systohc
+    timedatectl set-local-rtc 0 2>/dev/null || true
     echo "時間同步成功！當前系統時間: $(date)"
 else
     echo "警告: 無法讀取 HTTP 時間，跳過時間強制校正。"
