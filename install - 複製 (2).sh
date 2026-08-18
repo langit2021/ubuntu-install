@@ -214,7 +214,7 @@ echo
 # ------------------------------------------------------------
 # 9. 安裝 phpMyAdmin 與安全性設定
 # ------------------------------------------------------------
-echo "==> Installing and configuring phpMyAdmin..."
+echo "==> Installing phpMyAdmin..."
 echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
 echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
 apt-get install -y phpmyadmin
@@ -229,8 +229,7 @@ if [ -f /etc/phpmyadmin/config.inc.php ]; then
     fi
 fi
 
-# 1. 重設 MariaDB root 與 phpmyadmin 控制帳號
-# 使用 alter user 與 flush privileges 確保權限即時生效
+# 初始化 MariaDB 帳號與權限 (使用固定密碼 KXP1AEEuAsaqDWn)
 sudo mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 DELETE FROM mysql.user WHERE User='';
@@ -239,18 +238,15 @@ DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 
 CREATE DATABASE IF NOT EXISTS phpmyadmin;
 CREATE USER IF NOT EXISTS 'phpmyadmin'@'localhost' IDENTIFIED BY '${PMA_PASS}';
-ALTER USER 'phpmyadmin'@'localhost' IDENTIFIED BY '${PMA_PASS}';
 GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
 
 FLUSH PRIVILEGES;
 EOF
 
-# 2. 匯入 phpMyAdmin 基礎資料表
 if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
     mysql -u root -p"${MYSQL_ROOT_PASS}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
 fi
 
-# 3. 強制同步寫入 config-db.php 檔，確保密碼一致
 cat > /etc/phpmyadmin/config-db.php <<EOF
 <?php
 \$dbuser='phpmyadmin';
@@ -265,7 +261,7 @@ EOF
 chmod 660 /etc/phpmyadmin/config-db.php
 chown root:www-data /etc/phpmyadmin/config-db.php
 
-echo "[OK] phpMyAdmin configured successfully"
+echo "[OK] phpMyAdmin configured"
 echo
 # ------------------------------------------------------------
 # 10. 配置 SSL 憑證與 Apache VirtualHost
