@@ -419,7 +419,7 @@ ls -ld /data
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
 echo "=============================================="
-echo " Next step"
+echo " Next step .."
 echo "=============================================="
 echo
 echo "HTTP:"
