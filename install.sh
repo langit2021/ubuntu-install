@@ -11,7 +11,7 @@ echo "Hello World  pc 2.0"
 
 
 #!/usr/bin/env bash
-set -e
+#set -e
 
 echo "=== [1/5] 設定系統時區為 Asia/Taipei ==="
 sudo timedatectl set-timezone Asia/Taipei || true
@@ -21,7 +21,7 @@ echo "=== [2/5] 透過 HTTP 標頭強制同步時間（繞過 NTP 防火牆限�
 HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | cut -d' ' -f2-)
 if [ -n "$HTTP_DATE" ]; then
     date -s "$HTTP_DATE"
-    sudohwclock --systohc
+    sudo hwclock --systohc
     echo "時間同步成功！當前系統時間: $(date)"
 else
     echo "警告: 無法讀取 HTTP 時間，跳過時間強制校正。"
