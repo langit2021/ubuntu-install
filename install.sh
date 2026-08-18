@@ -18,7 +18,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-curl -L https://github.com/langit2021/ubuntu-install/archive/refs/heads/main.tar.gz \
+curl -L  https://raw.githubusercontent.com/langit2021/ubuntu-install/archive/refs/heads/main.tar.gz \
     -o "$TMP_DIR/install.tar.gz"
 
 tar -xzf "$TMP_DIR/install.tar.gz" -C "$TMP_DIR"
