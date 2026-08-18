@@ -191,7 +191,9 @@ echo
 # ------------------------------------------------------------
 
 echo "==> Installing MariaDB..."
+
 apt-get install -y mariadb-server mariadb-client
+
 systemctl enable mariadb
 systemctl start mariadb
 
@@ -202,16 +204,38 @@ echo "[OK] MariaDB installed"
 echo
 
 # ------------------------------------------------------------
-# 7.1 Secure MariaDB & Generate Passwords
+# 8. Install phpMyAdmin (在修改 Root 密碼前安裝)
 # ------------------------------------------------------------
 
-echo "==> Securing MariaDB & setting passwords..."
+echo "==> Installing phpMyAdmin..."
 
-# 生成 16 位高強度密碼
+export DEBIAN_FRONTEND=noninteractive
+echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
+echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
+
+# 先進行安裝，此時 MariaDB root 仍可透過 unix_socket 無密碼順利通過 dbconfig
+apt-get install -y phpmyadmin
+
+if [ -d /usr/share/phpmyadmin ]; then
+    if [ ! -e /var/www/html/phpmyadmin ]; then
+        ln -s /usr/share/phpmyadmin /var/www/html/phpmyadmin
+    fi
+fi
+
+echo "[OK] phpMyAdmin base package installed"
+echo
+
+# ------------------------------------------------------------
+# 9. Secure MariaDB & Configure Accounts (Root, OP, PMA)
+# ------------------------------------------------------------
+
+echo "==> Securing MariaDB & setting up user accounts..."
+
+# 生成 16 位高強度隨機密碼
 MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
 PMA_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
 
-# 設定 Root 密碼並預先建立 phpmyadmin 控制帳號與資料庫
+# 透過 UNIX Socket 寫入 MariaDB 權限與修復 phpMyAdmin 帳號
 sudo mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${MYSQL_ROOT_PASS}');
 DELETE FROM mysql.user WHERE User='';
@@ -225,27 +249,12 @@ GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-echo "[OK] MariaDB secured. Root and phpMyAdmin accounts prepared."
-echo
-
-# ------------------------------------------------------------
-# 8. Install phpMyAdmin
-# ------------------------------------------------------------
-
-echo "==> Installing phpMyAdmin..."
-
-export DEBIAN_FRONTEND=noninteractive
-# 關鍵：關閉 dbconfig-install 自動配置，避免安裝過程嘗試用無密碼存取 MariaDB
-echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections
-echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
-apt-get install -y phpmyadmin
-
-# 匯入 phpMyAdmin 控制資料表
+# 匯入 phpMyAdmin 儲存空間資料表
 if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
     sudo mysql phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql
 fi
 
-# 手動寫入正確的 dbconfig 給 phpMyAdmin 讀取
+# 將新產生的 phpmyadmin 密碼寫入 config-db.php 修復提示
 cat > /etc/phpmyadmin/config-db.php <<EOF
 <?php
 \$dbuser='phpmyadmin';
@@ -260,16 +269,9 @@ EOF
 chmod 660 /etc/phpmyadmin/config-db.php
 chown root:www-data /etc/phpmyadmin/config-db.php
 
-# 建立 Web 連結
-if [ -d /usr/share/phpmyadmin ]; then
-    if [ ! -e /var/www/html/phpmyadmin ]; then
-        ln -s /usr/share/phpmyadmin /var/www/html/phpmyadmin
-    fi
-fi
-
 systemctl restart apache2
 
-echo "[OK] phpMyAdmin installed & configured successfully"
+echo "[OK] MariaDB secured and phpMyAdmin configured successfully"
 echo
 
 # ------------------------------------------------------------
