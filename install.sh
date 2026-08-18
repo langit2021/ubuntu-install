@@ -22,25 +22,11 @@
 # Logging
 # ------------------------------------------------------------
 
-START_TIME=$(date '+%Y%m%d_%H%M')
-LOG_FILE="$(pwd)/install_${START_TIME}.log"
 
-exec > >(tee -a "$LOG_FILE") 2>&1
 
-echo "=============================================="
-echo " Installation Log"
-echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
-echo " Log: ${LOG_FILE}"
-echo "=============================================="
-echo
+
 set -e
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a # 自動重啟不受影響的服務，避免跳出紫底藍字的彈出選單
-echo "================================"
-echo " Ubuntu Install Framework"
-echo " Version 0.12"
-echo " curl -sL https://raw.githubusercontent.com/langit2021/ubuntu-install/main/install.sh | sudo bash"
-echo "================================"
+
 echo " Fix date time"
 echo "=== 設定系統時區為 Asia/Taipei ==="
 timedatectl set-timezone Asia/Taipei || true
@@ -53,6 +39,23 @@ if [ -n "$HTTP_DATE" ]; then
     echo "時間同步成功！當前系統時間: $(date)"
 fi
 
+START_TIME=$(date '+%Y%m%d_%H%M')
+LOG_FILE="$(pwd)/install_${START_TIME}.log"
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "=============================================="
+echo " Installation Log"
+echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
+echo " Log: ${LOG_FILE}"
+echo "=============================================="
+echo
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a # 自動重啟不受影響的服務，避免跳出紫底藍字的彈出選單
+echo "================================"
+echo " Ubuntu Install Framework"
+echo " Version 0.12"
+echo " curl -sL https://raw.githubusercontent.com/langit2021/ubuntu-install/main/install.sh | sudo bash"
+echo "================================"
 # 把  http:// 改 https://  怕有些防火牆會擋
 sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
 
