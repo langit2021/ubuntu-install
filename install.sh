@@ -91,6 +91,7 @@ mkdir -p "${MYSQL_DIR}"
 mkdir -p "${LOG_APACHE}"
 mkdir -p "${LOG_PHP}"
 mkdir -p "${DATA_DIR}/backup"
+mkdir -p "${DATA_DIR}/my_config"
 echo "[OK] Directory structure created"
 echo
 
@@ -215,10 +216,8 @@ echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selecti
 echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
 apt-get install -y phpmyadmin
 
-# 建立軟連結至網頁根目錄
-if [ -d /usr/share/phpmyadmin ]; then
-    ln -sfn /usr/share/phpmyadmin "${WEB_ROOT}/phpmyadmin"
-fi
+# 啟用 phpMyAdmin 官方提供的 Apache Alias 設定檔 (對應 /phpmyadmin)
+a2enconf phpmyadmin
 
 # 設定 phpMyAdmin 允許 root 密碼登入
 if [ -f /etc/phpmyadmin/config.inc.php ]; then
@@ -227,7 +226,7 @@ if [ -f /etc/phpmyadmin/config.inc.php ]; then
     fi
 fi
 
-# 初始化 MariaDB 帳號與權限 (已修正 MariaDB 語法)
+# 初始化 MariaDB 帳號與權限 (相容語法)
 sudo mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 DELETE FROM mysql.user WHERE User='';
@@ -259,7 +258,7 @@ EOF
 chmod 660 /etc/phpmyadmin/config-db.php
 chown root:www-data /etc/phpmyadmin/config-db.php
 
-echo "[OK] phpMyAdmin configured"
+echo "[OK] phpMyAdmin configured via Apache Alias"
 echo
 
 # ------------------------------------------------------------
@@ -277,7 +276,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 chmod 600 "${SSL_DIR}/server.key"
 chmod 644 "${SSL_DIR}/server.crt"
 
-# VirtualHost 組態指向 /data/www 及 /data/logs/apache/
+# VirtualHost 組態：加上 /my_config Alias 別名
 cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 <VirtualHost *:443>
     ServerName localhost
@@ -288,7 +287,16 @@ cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
     SSLCertificateFile ${SSL_DIR}/server.crt
     SSLCertificateKeyFile ${SSL_DIR}/server.key
 
+    # 主網頁目錄權限
     <Directory ${WEB_ROOT}>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    # 虛擬目錄：my_config 對應至 /data/my_config
+    Alias /my_config ${DATA_DIR}/my_config
+    <Directory ${DATA_DIR}/my_config>
         Options FollowSymLinks
         AllowOverride All
         Require all granted
@@ -315,7 +323,7 @@ SERVER_HOSTNAME=$(hostname)
 echo "ServerName ${SERVER_HOSTNAME}" > /etc/apache2/conf-available/servername.conf
 a2enconf servername
 
-echo "[OK] Apache VirtualHost configured"
+echo "[OK] Apache VirtualHost and Aliases configured"
 echo
 
 # ------------------------------------------------------------
@@ -323,7 +331,7 @@ echo
 # ------------------------------------------------------------
 echo "==> Creating test page and /my_config interface..."
 
-# 部署首頁 (頂端帶有 /my_config 快捷連結)
+# 部署首頁 (僅於 /data/www 下建立單純的 index.php)
 cat > "${WEB_ROOT}/index.php" <<'EOF'
 <!DOCTYPE html>
 <html lang="zh-TW">
@@ -344,9 +352,8 @@ cat > "${WEB_ROOT}/index.php" <<'EOF'
 </html>
 EOF
 
-# 部署 /my_config 頁面 (包含首頁按鈕與 PHP 上傳/記憶體參數)
-mkdir -p "${CONFIG_DIR}"
-cat > "${CONFIG_DIR}/index.php" <<EOF
+# 寫入獨立控制台網頁至 /data/my_config/index.php
+cat > "${DATA_DIR}/my_config/index.php" <<EOF
 <?php
 ?>
 <!DOCTYPE html>
@@ -419,7 +426,11 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
 </html>
 EOF
 
-echo "[OK] Test page & my_config created"
+# 設定 /data/my_config 權限歸屬
+chown -R www-data:www-data "${DATA_DIR}/my_config"
+chmod -R 755 "${DATA_DIR}/my_config"
+
+echo "[OK] Test page & my_config created as virtual directories"
 echo
 
 # ------------------------------------------------------------
