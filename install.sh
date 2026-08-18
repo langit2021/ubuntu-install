@@ -11,7 +11,7 @@ echo " curl -sL https://raw.githubusercontent.com/langit2021/ubuntu-install/main
 echo "================================"
 echo " Fix date time"
 echo "=== [1/5] 設定系統時區為 Asia/Taipei ==="
-apt install -y util-linux
+
 timedatectl set-timezone Asia/Taipei || true
 echo "=== [2/5] 透過 HTTP 標頭強制同步時間（繞過 NTP 防火牆限制）==="
 # 使用 tlsdate 或 curl 取得伺服器 Date Header，直接寫入系統時間
