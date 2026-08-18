@@ -22,10 +22,8 @@ curl -L https://github.com/langit2021/ubuntu-install/archive/refs/heads/main.tar
     -o "$TMP_DIR/install.tar.gz"
 
 tar -xzf "$TMP_DIR/install.tar.gz" -C "$TMP_DIR"
-
 PROJECT_DIR="$TMP_DIR/ubuntu-install-main"
-
-bash scripts/fix-datetime.sh
+bash "$PROJECT_DIR/scripts/fix-datetime.sh"
 
 # 把  http:// 改 https://  怕有些防火牆會擋
 sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
