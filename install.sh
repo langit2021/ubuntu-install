@@ -167,7 +167,25 @@ systemctl restart apache2
 
 echo "[OK] PHP 8.3 installed"
 echo
+# ------------------------------------------------------------
+# 7.1 Create Maintenance User (op) & Generate Passwords
+# ------------------------------------------------------------
 
+echo "==> Creating op user and generating credentials..."
+
+# 生成 16 位高強度密碼
+OP_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+
+# 建立 op 帳號並設定密碼
+if ! id "op" &>/dev/null; then
+    useradd -m -s /bin/bash op
+fi
+echo "op:${OP_PASS}" | chpasswd
+usermod -aG www-data op
+
+echo "[OK] User op created"
+echo
 # ------------------------------------------------------------
 # 7. Install MariaDB
 # ------------------------------------------------------------
@@ -214,6 +232,23 @@ echo "phpmyadmin phpmyadmin/app-password-confirm password " | debconf-set-select
 echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
 apt-get install -y phpmyadmin
 
+# 修復 phpMyAdmin 儲存空間與 phpmyadmin 控制帳號權限
+PMA_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+
+sudo mysql <<EOF
+CREATE DATABASE IF NOT EXISTS phpmyadmin;
+ALTER USER 'phpmyadmin'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${PMA_PASS}');
+GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
+    sudo mysql phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql
+fi
+
+# 寫入正確控制密碼至 phpmyadmin 設定檔
+sed -i "s/\$dbpass=.*/\$dbpass='${PMA_PASS}';/" /etc/phpmyadmin/config-db.php
+
 if [ -d /usr/share/phpmyadmin ]; then
     if [ ! -e /var/www/html/phpmyadmin ]; then
         ln -s /usr/share/phpmyadmin /var/www/html/phpmyadmin
@@ -222,7 +257,7 @@ fi
 
 systemctl restart apache2
 
-echo "[OK] phpMyAdmin installed"
+echo "[OK] phpMyAdmin installed & configured"
 echo
 
 # ------------------------------------------------------------
@@ -293,10 +328,16 @@ echo
 
 echo "==> Configuring HTTPS..."
 
+# 移除預設 index.html 避免優先讀取到 Apache 預設頁
+rm -f ${WEB_ROOT}/index.html
+
 cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 <VirtualHost *:443>
+
     ServerName localhost
+
     DocumentRoot ${WEB_ROOT}
+    DirectoryIndex index.php index.html
 
     SSLEngine on
     SSLCertificateFile ${SSL_DIR}/server.crt
@@ -310,6 +351,7 @@ cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 
     ErrorLog \${APACHE_LOG_DIR}/webserver-error.log
     CustomLog \${APACHE_LOG_DIR}/webserver-access.log combined
+
 </VirtualHost>
 EOF
 
@@ -351,11 +393,20 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
         code { font-weight: bold; color: #d9534f; }
     </style>
 </head>
+
 <body>
 
 <h1>Ubuntu Web Server</h1>
+
 <p>Base installation completed.</p>
+
 <hr>
+
+<h2>System User Credentials (SFTP / SSH)</h2>
+<div class="credentials">
+    <p><strong>Username:</strong> <code>op</code></p>
+    <p><strong>Password:</strong> <code>${OP_PASS}</code></p>
+</div>
 
 <h2>Database Credentials (MariaDB)</h2>
 <div class="credentials">
@@ -364,7 +415,9 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
 </div>
 
 <hr>
+
 <h2>System</h2>
+
 <ul>
     <li>Ubuntu: OK</li>
     <li>Apache: OK</li>
@@ -375,6 +428,7 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
 </ul>
 
 <hr>
+
 <p>Phase 2 configuration wizard will be installed here.</p>
 
 </body>
@@ -383,7 +437,6 @@ EOF
 
 echo "[OK] my_config created"
 echo
-
 # ------------------------------------------------------------
 # 15. Set basic permissions
 # ------------------------------------------------------------
@@ -440,6 +493,10 @@ echo "HTTPS:         https://${SERVER_IP}/"
 echo "Configuration: https://${SERVER_IP}/my_config/"
 echo "phpMyAdmin:    https://${SERVER_IP}/phpmyadmin/"
 echo 
+echo "System Maintenance Account (SSH / SFTP):"
+echo "  Username: op"
+echo "  Password: ${OP_PASS}"
+echo
 echo "MariaDB Root Credentials:"
 echo "  Username: root"
 echo "  Password: ${MYSQL_ROOT_PASS}"
