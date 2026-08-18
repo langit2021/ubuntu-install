@@ -175,7 +175,17 @@ fi
 echo "op:${OP_PASS}" | chpasswd
 usermod -aG www-data op
 
-echo "[OK] Maintenance user created"
+# 在 /home/op 建立快捷軟連結 (SFTP 登入即可直達)
+ln -sfn "${WEB_ROOT}" /home/op/www
+ln -sfn "${DATA_DIR}/backup" /home/op/backup
+chown -h op:op /home/op/www /home/op/backup
+
+# 設定 SSH 終端機登入時預設自動進入 /data/www
+if ! grep -q "cd /data/www" /home/op/.bashrc 2>/dev/null; then
+    echo "cd /data/www" >> /home/op/.bashrc
+fi
+
+echo "[OK] Maintenance user created with shortcuts (www, backup)"
 echo
 
 # ------------------------------------------------------------
@@ -417,12 +427,20 @@ echo
 # ------------------------------------------------------------
 echo "==> Setting permissions & restarting services..."
 
+# 網頁目錄：op 擁有，www-data 群組，設定 g+s 確保未來新檔自動繼承群組
 chown -R op:www-data "${WEB_ROOT}"
 chmod -R 775 "${WEB_ROOT}"
+find "${WEB_ROOT}" -type d -exec chmod g+s {} +
 
+# 資料庫目錄：mysql 專屬
 chown -R mysql:mysql "${MYSQL_DIR}"
 chmod -R 770 "${MYSQL_DIR}"
 
+# 備份目錄：root 擁有，op 群組可讀取下載
+chown -R root:op "${DATA_DIR}/backup"
+chmod -R 775 "${DATA_DIR}/backup"
+
+# Log 目錄：www-data 寫入權限
 chown -R www-data:www-data "${DATA_DIR}/logs"
 chmod -R 775 "${DATA_DIR}/logs"
 
