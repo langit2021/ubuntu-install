@@ -5,4 +5,4 @@ echo " Ubuntu Install Framework"
 echo " Version 0.1"
 echo "================================"
 
-echo "Hello World"
+echo "Hello World  pc 2.0"
