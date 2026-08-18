@@ -2,25 +2,29 @@
 
 # ============================================================
 # Ubuntu Web Server Installer
-# Version: 0.3
+# Version: 0.2
 # Target: Ubuntu Server 24.04 LTS
 #
 # Phase 1:
-#   - Basic system packages & timezone fix
-#   - Apache + PHP 8.3 + MariaDB + phpMyAdmin
-#   - Centralized /data structure (www, mysql, logs/apache, logs/php)
-#   - Maintenance user (op) & random password generation
-#   - Self-signed HTTPS & /my_config info page
+#   - Basic system packages
+#   - Apache
+#   - PHP 8.3
+#   - MariaDB
+#   - phpMyAdmin
+#   - Git
+#   - /data directory structure
+#   - Self-signed HTTPS
+#   - /my_config initial page
+#
+# Phase 2 will be handled by PHP Web Configurator
 # ============================================================
 
 set -e
 
-# ------------------------------------------------------------
-# 1. 時間同步與日誌準備
-# ------------------------------------------------------------
+echo " Fix date time"
 echo "=== 設定系統時區為 Asia/Taipei ==="
 timedatectl set-timezone Asia/Taipei || true
-echo "=== 透過 HTTP 標頭強制同步時間 ==="
+echo "=== 透過 HTTP 標頭強制同步時間（繞過 NTP 防火牆限制）==="
 HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | tr -d '\r' | cut -d' ' -f2-)
 if [ -n "$HTTP_DATE" ]; then
     date -u -s "$HTTP_DATE"
@@ -39,16 +43,22 @@ echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
 echo " Log: ${LOG_FILE}"
 echo "=============================================="
 echo
-
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="0.3"
+echo "================================"
+echo " Ubuntu Install Framework"
+echo " Version 0.2"
+echo "================================"
+
+sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
+
+apt install -y iputils-ping net-tools 
+
+#=======================================================================
+VERSION="0.2"
 DATA_DIR="/data"
-WEB_ROOT="${DATA_DIR}/www"
-MYSQL_DIR="${DATA_DIR}/mysql"
-LOG_APACHE="${DATA_DIR}/logs/apache"
-LOG_PHP="${DATA_DIR}/logs/php"
+WEB_ROOT="/var/www/html"
 CONFIG_DIR="${WEB_ROOT}/my_config"
 SSL_DIR="/etc/apache2/ssl"
 
@@ -60,12 +70,17 @@ echo "=============================================="
 echo
 
 # ------------------------------------------------------------
-# 2. 系統環境檢查
+# 1. Check root
 # ------------------------------------------------------------
+
 if [ "$EUID" -ne 0 ]; then
     echo "ERROR: Please run this script as root."
     exit 1
 fi
+
+# ------------------------------------------------------------
+# 2. Check Ubuntu version
+# ------------------------------------------------------------
 
 if [ ! -f /etc/os-release ]; then
     echo "ERROR: Cannot detect operating system."
@@ -74,8 +89,14 @@ fi
 
 source /etc/os-release
 
-if [ "$ID" != "ubuntu" ] || [ "$VERSION_ID" != "24.04" ]; then
-    echo "ERROR: This script requires Ubuntu 24.04 LTS."
+if [ "$ID" != "ubuntu" ]; then
+    echo "ERROR: This script only supports Ubuntu."
+    exit 1
+fi
+
+if [ "$VERSION_ID" != "24.04" ]; then
+    echo "ERROR: This script requires Ubuntu 24.04."
+    echo "Detected: Ubuntu ${VERSION_ID}"
     exit 1
 fi
 
@@ -83,26 +104,20 @@ echo "[OK] Ubuntu ${VERSION_ID}"
 echo
 
 # ------------------------------------------------------------
-# 3. 建立 /data 集中化目錄結構
+# 3. Update package information
 # ------------------------------------------------------------
-echo "==> Creating /data directory structure..."
-mkdir -p "${WEB_ROOT}"
-mkdir -p "${MYSQL_DIR}"
-mkdir -p "${LOG_APACHE}"
-mkdir -p "${LOG_PHP}"
-mkdir -p "${DATA_DIR}/backup"
-echo "[OK] Directory structure created"
+
+echo "==> Updating package information..."
+apt-get update
+echo "[OK] apt update"
 echo
 
 # ------------------------------------------------------------
-# 4. 更新套件源與安裝基礎工具
+# 4. Install basic packages
 # ------------------------------------------------------------
-echo "==> Updating package information and installing base packages..."
-sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
-apt-get update
+
+echo "==> Installing basic packages..."
 apt-get install -y \
-    iputils-ping \
-    net-tools \
     git \
     unzip \
     zip \
@@ -111,26 +126,28 @@ apt-get install -y \
     openssl \
     lsb-release \
     software-properties-common \
-    apt-transport-https \
-    rsync
+    apt-transport-https
 
-echo "[OK] Base packages installed"
+echo "[OK] Basic packages installed"
 echo
 
 # ------------------------------------------------------------
-# 5. 安裝 Apache
+# 5. Install Apache
 # ------------------------------------------------------------
+
 echo "==> Installing Apache..."
 apt-get install -y apache2
 systemctl enable apache2
 systemctl start apache2
+
 echo "[OK] Apache installed"
 echo
 
 # ------------------------------------------------------------
-# 6. 安裝與設定 PHP 8.3
+# 6. Install PHP 8.3
 # ------------------------------------------------------------
-echo "==> Installing PHP 8.3 and configuring logs..."
+
+echo "==> Installing PHP..."
 apt-get install -y \
     php8.3 \
     libapache2-mod-php8.3 \
@@ -146,74 +163,79 @@ apt-get install -y \
     php8.3-intl
 
 a2enmod php8.3
-
-# 配置 PHP Log 存放於 /data/logs/php/
-sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/apache2/php.ini
-sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/cli/php.ini
-touch "${LOG_PHP}/php_errors.log"
-
 systemctl restart apache2
-echo "[OK] PHP 8.3 installed and logs configured"
+
+echo "[OK] PHP 8.3 installed"
 echo
-
 # ------------------------------------------------------------
-# 7. 建立維護帳號 (op) 與產出隨機密碼
+# 7.1 Create Maintenance User (op) & Generate Passwords
 # ------------------------------------------------------------
-echo "==> Creating maintenance user (op) and generating credentials..."
 
+echo "==> Creating op user and generating credentials..."
+
+# 生成 16 位高強度密碼
 OP_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
 MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
-PMA_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
 
+# 建立 op 帳號並設定密碼
 if ! id "op" &>/dev/null; then
     useradd -m -s /bin/bash op
 fi
 echo "op:${OP_PASS}" | chpasswd
 usermod -aG www-data op
 
-echo "[OK] Maintenance user created"
+echo "[OK] User op created"
 echo
+# ------------------------------------------------------------
+# 7. Install MariaDB
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# 8. 安裝 MariaDB 並移轉資料目錄至 /data/mysql
-# ------------------------------------------------------------
-echo "==> Installing MariaDB & migrating datadir to /data/mysql..."
+echo "==> Installing MariaDB..."
+
 apt-get install -y mariadb-server mariadb-client
-systemctl enable mariadb
 
-# 停止服務進行目錄轉移
-systemctl stop mariadb
-if [ -d "/var/lib/mysql" ] && [ ! -f "${MYSQL_DIR}/ibdata1" ]; then
-    rsync -av /var/lib/mysql/ "${MYSQL_DIR}/"
-fi
-sed -i "s|datadir\s*=\s*/var/lib/mysql|datadir = ${MYSQL_DIR}|g" /etc/mysql/mariadb.conf.d/50-server.cnf
-chown -R mysql:mysql "${MYSQL_DIR}"
+systemctl enable mariadb
 systemctl start mariadb
 
-echo "[OK] MariaDB installed and relocated to /data/mysql"
+echo "等待 MariaDB 服務初始化..."
+sleep 3
+
+echo "[OK] MariaDB installed"
 echo
 
 # ------------------------------------------------------------
-# 9. 安裝 phpMyAdmin 與安全性設定
+# 8. Install phpMyAdmin (在修改 Root 密碼前安裝)
 # ------------------------------------------------------------
+
 echo "==> Installing phpMyAdmin..."
+
+export DEBIAN_FRONTEND=noninteractive
 echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
 echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
+
+# 先進行安裝，此時 MariaDB root 仍可透過 unix_socket 無密碼順利通過 dbconfig
 apt-get install -y phpmyadmin
 
-# 建立軟連結至網頁根目錄
 if [ -d /usr/share/phpmyadmin ]; then
-    ln -sfn /usr/share/phpmyadmin "${WEB_ROOT}/phpmyadmin"
-fi
-
-# 設定 phpMyAdmin 允許 root 密碼登入
-if [ -f /etc/phpmyadmin/config.inc.php ]; then
-    if ! grep -q "AllowRoot" /etc/phpmyadmin/config.inc.php; then
-        echo "\$cfg['Servers'][\$i]['AllowRoot'] = TRUE;" >> /etc/phpmyadmin/config.inc.php
+    if [ ! -e /var/www/html/phpmyadmin ]; then
+        ln -s /usr/share/phpmyadmin /var/www/html/phpmyadmin
     fi
 fi
 
-# 初始化 MariaDB 帳號與權限
+echo "[OK] phpMyAdmin base package installed"
+echo
+
+# ------------------------------------------------------------
+# 9. Secure MariaDB & Configure Accounts (Root, OP, PMA)
+# ------------------------------------------------------------
+
+echo "==> Securing MariaDB & setting up user accounts..."
+
+# 生成 16 位高強度隨機密碼
+MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+PMA_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+
+# 透過 UNIX Socket 寫入 MariaDB 權限與修復 phpMyAdmin 帳號
 sudo mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${MYSQL_ROOT_PASS}');
 DELETE FROM mysql.user WHERE User='';
@@ -227,10 +249,12 @@ GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
+# 匯入 phpMyAdmin 儲存空間資料表
 if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
-    mysql -u root -p"${MYSQL_ROOT_PASS}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
+    sudo mysql phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql
 fi
 
+# 將新產生的 phpmyadmin 密碼寫入 config-db.php 修復提示
 cat > /etc/phpmyadmin/config-db.php <<EOF
 <?php
 \$dbuser='phpmyadmin';
@@ -245,17 +269,63 @@ EOF
 chmod 660 /etc/phpmyadmin/config-db.php
 chown root:www-data /etc/phpmyadmin/config-db.php
 
-echo "[OK] phpMyAdmin configured"
+systemctl restart apache2
+
+echo "[OK] MariaDB secured and phpMyAdmin configured successfully"
 echo
 
 # ------------------------------------------------------------
-# 10. 配置 SSL 憑證與 Apache VirtualHost
+# 9. Create /data structure
 # ------------------------------------------------------------
-echo "==> Configuring Apache SSL and VirtualHost..."
-a2enmod ssl rewrite headers
+
+echo "==> Creating /data structure..."
+
+mkdir -p "${DATA_DIR}/www"
+mkdir -p "${DATA_DIR}/database"
+mkdir -p "${DATA_DIR}/logs"
+mkdir -p "${DATA_DIR}/backup"
+
+echo "[OK] /data structure created"
+echo
+
+# ------------------------------------------------------------
+# 10. Create basic PHP test
+# ------------------------------------------------------------
+
+echo "==> Creating PHP test page..."
+
+cat > "${WEB_ROOT}/index.php" <<'EOF'
+<?php
+phpinfo();
+?>
+EOF
+
+echo "[OK] PHP test page created"
+echo
+
+# ------------------------------------------------------------
+# 11. Enable Apache SSL
+# ------------------------------------------------------------
+
+echo "==> Enabling Apache SSL..."
+
+a2enmod ssl
+a2enmod rewrite
+a2enmod headers
+
 mkdir -p "${SSL_DIR}"
 
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+# ------------------------------------------------------------
+# 12. Create self-signed certificate
+# ------------------------------------------------------------
+
+echo "==> Creating self-signed certificate..."
+
+openssl req \
+    -x509 \
+    -nodes \
+    -days 365 \
+    -newkey rsa:2048 \
     -keyout "${SSL_DIR}/server.key" \
     -out "${SSL_DIR}/server.crt" \
     -subj "/C=TW/ST=Taiwan/L=Taipei/O=WebServer/OU=IT/CN=$(hostname)"
@@ -263,10 +333,23 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 chmod 600 "${SSL_DIR}/server.key"
 chmod 644 "${SSL_DIR}/server.crt"
 
-# VirtualHost 組態指向 /data/www 及 /data/logs/apache/
+echo "[OK] Self-signed certificate created"
+echo
+
+# ------------------------------------------------------------
+# 13. Create basic HTTPS VirtualHost
+# ------------------------------------------------------------
+
+echo "==> Configuring HTTPS..."
+
+# 移除預設 index.html 避免優先讀取到 Apache 預設頁
+rm -f ${WEB_ROOT}/index.html
+
 cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 <VirtualHost *:443>
+
     ServerName localhost
+
     DocumentRoot ${WEB_ROOT}
     DirectoryIndex index.php index.html
 
@@ -280,8 +363,9 @@ cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
         Require all granted
     </Directory>
 
-    ErrorLog ${LOG_APACHE}/error.log
-    CustomLog ${LOG_APACHE}/access.log combined
+    ErrorLog \${APACHE_LOG_DIR}/webserver-error.log
+    CustomLog \${APACHE_LOG_DIR}/webserver-access.log combined
+
 </VirtualHost>
 EOF
 
@@ -297,107 +381,115 @@ a2dissite 000-default.conf 2>/dev/null || true
 a2dissite default-ssl.conf 2>/dev/null || true
 a2ensite webserver-ssl.conf
 
-SERVER_HOSTNAME=$(hostname)
-echo "ServerName ${SERVER_HOSTNAME}" > /etc/apache2/conf-available/servername.conf
-a2enconf servername
+systemctl reload apache2
 
-echo "[OK] Apache VirtualHost configured"
+echo "[OK] HTTPS configured"
 echo
 
 # ------------------------------------------------------------
-# 11. 部署測試頁面與 /my_config 頁面
+# 14. Create my_config
 # ------------------------------------------------------------
-echo "==> Creating test page and /my_config interface..."
 
-cat > "${WEB_ROOT}/index.php" <<'EOF'
-<?php
-phpinfo();
-?>
-EOF
+echo "==> Creating my_config..."
 
 mkdir -p "${CONFIG_DIR}"
+
 cat > "${CONFIG_DIR}/index.php" <<EOF
 <?php
 ?>
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Ubuntu Web Server Configuration</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 30px; line-height: 1.6; }
-        .credentials { background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 12px; margin: 15px 0; }
-        code { font-weight: bold; color: #d9534f; background: #eee; padding: 2px 6px; border-radius: 4px; }
+        .credentials { background-color: #f8f9fa; border-left: 4px solid #07a; padding: 10px; margin: 15px 0; }
+        code { font-weight: bold; color: #d9534f; }
     </style>
 </head>
+
 <body>
 
-<h1>Ubuntu Web Server 系統組態資訊</h1>
-<p>第一階段自動化部署已完成。</p>
+<h1>Ubuntu Web Server</h1>
+
+<p>Base installation completed.</p>
 
 <hr>
 
-<h2>系統維護帳號 (SFTP / SSH)</h2>
+<h2>System User Credentials (SFTP / SSH)</h2>
 <div class="credentials">
-    <p><strong>帳號：</strong> <code>op</code></p>
-    <p><strong>密碼：</strong> <code>${OP_PASS}</code></p>
+    <p><strong>Username:</strong> <code>op</code></p>
+    <p><strong>Password:</strong> <code>${OP_PASS}</code></p>
 </div>
 
-<h2>資料庫管理帳號 (MariaDB)</h2>
+<h2>Database Credentials (MariaDB)</h2>
 <div class="credentials">
-    <p><strong>帳號：</strong> <code>root</code></p>
-    <p><strong>密碼：</strong> <code>${MYSQL_ROOT_PASS}</code></p>
+    <p><strong>Username:</strong> <code>root</code></p>
+    <p><strong>Password:</strong> <code>${MYSQL_ROOT_PASS}</code></p>
 </div>
 
 <hr>
 
-<h2>集中化目錄與服務狀態</h2>
+<h2>System</h2>
+
 <ul>
-    <li>Ubuntu 版本：OK (24.04 LTS)</li>
-    <li>Apache：OK</li>
-    <li>PHP 版本：<?php echo PHP_VERSION; ?></li>
-    <li>MariaDB：OK</li>
-    <li>phpMyAdmin：Installed</li>
-    <li>網頁目錄 (/data/www)：<?php echo is_dir('/data/www') ? 'OK' : 'ERROR'; ?></li>
-    <li>資料庫目錄 (/data/mysql)：<?php echo is_dir('/data/mysql') ? 'OK' : 'ERROR'; ?></li>
-    <li>Apache Log (/data/logs/apache)：<?php echo is_dir('/data/logs/apache') ? 'OK' : 'ERROR'; ?></li>
-    <li>PHP Log (/data/logs/php)：<?php echo is_dir('/data/logs/php') ? 'OK' : 'ERROR'; ?></li>
+    <li>Ubuntu: OK</li>
+    <li>Apache: OK</li>
+    <li>PHP: <?php echo PHP_VERSION; ?></li>
+    <li>MariaDB: Installed</li>
+    <li>phpMyAdmin: Installed</li>
+    <li>/data: <?php echo is_dir('/data') ? 'OK' : 'ERROR'; ?></li>
 </ul>
 
 <hr>
-<p>第二階段互動式控制台將於此頁面擴充。</p>
+
+<p>Phase 2 configuration wizard will be installed here.</p>
 
 </body>
 </html>
 EOF
 
-echo "[OK] Test page & my_config created"
+echo "[OK] my_config created"
+echo
+# ------------------------------------------------------------
+# 15. Set basic permissions
+# ------------------------------------------------------------
+
+echo "==> Setting basic permissions..."
+
+chown -R www-data:www-data "${WEB_ROOT}"
+chmod 755 "${WEB_ROOT}"
+
+chmod 755 "${DATA_DIR}"
+chmod 755 "${DATA_DIR}/www"
+chmod 755 "${DATA_DIR}/database"
+chmod 755 "${DATA_DIR}/logs"
+chmod 755 "${DATA_DIR}/backup"
+
+echo "[OK] Basic permissions configured"
 echo
 
+SERVER_HOSTNAME=$(hostname)
+echo "ServerName ${SERVER_HOSTNAME}" > /etc/apache2/conf-available/servername.conf
+a2enconf servername
+
 # ------------------------------------------------------------
-# 12. 設定目錄權限與重啟服務
+# 16. Apache configuration test & Restart
 # ------------------------------------------------------------
-echo "==> Setting permissions & restarting services..."
 
-chown -R op:www-data "${WEB_ROOT}"
-chmod -R 775 "${WEB_ROOT}"
-
-chown -R mysql:mysql "${MYSQL_DIR}"
-chmod -R 770 "${MYSQL_DIR}"
-
-chown -R www-data:www-data "${DATA_DIR}/logs"
-chmod -R 775 "${DATA_DIR}/logs"
-
+echo "==> Testing Apache configuration..."
 apache2ctl configtest
+echo
+
+echo "==> Restarting services..."
 systemctl restart apache2
 systemctl restart mariadb
-
-echo "[OK] Services restarted successfully"
 echo
 
 # ------------------------------------------------------------
-# 13. 計算耗時並輸出終端資訊
+# 17. Calculate Elapsed Time & Print Summary
 # ------------------------------------------------------------
+
 END_SEC=$(date +%s)
 ELAPSED_SEC=$((END_SEC - START_SEC))
 MINUTES=$((ELAPSED_SEC / 60))
@@ -406,20 +498,20 @@ SECONDS=$((ELAPSED_SEC % 60))
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
 echo "=============================================="
-echo " 安裝完成！(Installation Completed)"
-echo " 總耗時：${MINUTES} 分 ${SECONDS} 秒"
+echo " Installation Completed Successfully!"
+echo " Total Elapsed Time: ${MINUTES}m ${SECONDS}s"
 echo "=============================================="
 echo
-echo "HTTP 網址:       http://${SERVER_IP}/"
-echo "HTTPS 網址:      https://${SERVER_IP}/"
-echo "控制台 (/my_config): https://${SERVER_IP}/my_config/"
-echo "phpMyAdmin:        https://${SERVER_IP}/phpmyadmin/"
+echo "HTTP:          http://${SERVER_IP}/"
+echo "HTTPS:         https://${SERVER_IP}/"
+echo "Configuration: https://${SERVER_IP}/my_config/"
+echo "phpMyAdmin:    https://${SERVER_IP}/phpmyadmin/"
 echo 
-echo "系統維護帳號 (SSH / SFTP):"
-echo "  帳號: op"
-echo "  密碼: ${OP_PASS}"
+echo "System Maintenance Account (SSH / SFTP):"
+echo "  Username: op"
+echo "  Password: ${OP_PASS}"
 echo
-echo "MariaDB Root 憑證:"
-echo "  帳號: root"
-echo "  密碼: ${MYSQL_ROOT_PASS}"
+echo "MariaDB Root Credentials:"
+echo "  Username: root"
+echo "  Password: ${MYSQL_ROOT_PASS}"
 echo "=============================================="
