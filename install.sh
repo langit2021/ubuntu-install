@@ -2,7 +2,7 @@
 
 # ============================================================
 # Ubuntu Web Server Installer
-# Version: 0.1
+# Version: 0.2
 # Target: Ubuntu Server 24.04 LTS
 #
 # Phase 1:
@@ -18,12 +18,6 @@
 #
 # Phase 2 will be handled by PHP Web Configurator
 # ============================================================
-# ------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------
-
-
-
 
 set -e
 
@@ -31,7 +25,6 @@ echo " Fix date time"
 echo "=== 設定系統時區為 Asia/Taipei ==="
 timedatectl set-timezone Asia/Taipei || true
 echo "=== 透過 HTTP 標頭強制同步時間（繞過 NTP 防火牆限制）==="
-# 使用 tlsdate 或 curl 取得伺服器 Date Header，直接寫入系統時間
 HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | tr -d '\r' | cut -d' ' -f2-)
 if [ -n "$HTTP_DATE" ]; then
     date -u -s "$HTTP_DATE"
@@ -40,6 +33,7 @@ if [ -n "$HTTP_DATE" ]; then
 fi
 
 START_TIME=$(date '+%Y%m%d_%H%M')
+START_SEC=$(date +%s)
 LOG_FILE="$(pwd)/install_${START_TIME}.log"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -50,20 +44,19 @@ echo " Log: ${LOG_FILE}"
 echo "=============================================="
 echo
 export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a # 自動重啟不受影響的服務，避免跳出紫底藍字的彈出選單
+export NEEDRESTART_MODE=a
+
 echo "================================"
 echo " Ubuntu Install Framework"
-echo " Version 0.12"
-echo " curl -sL https://raw.githubusercontent.com/langit2021/ubuntu-install/main/install.sh | sudo bash"
+echo " Version 0.2"
 echo "================================"
-# 把  http:// 改 https://  怕有些防火牆會擋
+
 sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
 
 apt install -y iputils-ping net-tools 
 
-
 #=======================================================================
-VERSION="0.1"
+VERSION="0.2"
 DATA_DIR="/data"
 WEB_ROOT="/var/www/html"
 CONFIG_DIR="${WEB_ROOT}/my_config"
@@ -115,9 +108,7 @@ echo
 # ------------------------------------------------------------
 
 echo "==> Updating package information..."
-
 apt-get update
-
 echo "[OK] apt update"
 echo
 
@@ -126,7 +117,6 @@ echo
 # ------------------------------------------------------------
 
 echo "==> Installing basic packages..."
-
 apt-get install -y \
     git \
     unzip \
@@ -146,9 +136,7 @@ echo
 # ------------------------------------------------------------
 
 echo "==> Installing Apache..."
-
 apt-get install -y apache2
-
 systemctl enable apache2
 systemctl start apache2
 
@@ -160,7 +148,6 @@ echo
 # ------------------------------------------------------------
 
 echo "==> Installing PHP..."
-
 apt-get install -y \
     php8.3 \
     libapache2-mod-php8.3 \
@@ -176,7 +163,6 @@ apt-get install -y \
     php8.3-intl
 
 a2enmod php8.3
-
 systemctl restart apache2
 
 echo "[OK] PHP 8.3 installed"
@@ -187,32 +173,35 @@ echo
 # ------------------------------------------------------------
 
 echo "==> Installing MariaDB..."
-
 apt-get install -y mariadb-server mariadb-client
-
 systemctl enable mariadb
 systemctl start mariadb
 
+echo "等待 MariaDB 服務初始化..."
+sleep 3
+
 echo "[OK] MariaDB installed"
 echo
+
 # ------------------------------------------------------------
 # 7.1 Secure MariaDB & Generate Root Password
 # ------------------------------------------------------------
 
 echo "==> Securing MariaDB & setting root password..."
 
-# 自動生成 16 位高強度隨機密碼 (包含大小寫字母、數字)
 MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
 
-# 清除匿名使用者、刪除測試資料庫，並設定 root 密碼與切換密碼驗證模式
-mariadb -e "ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${MYSQL_ROOT_PASS}');"
-mariadb -e "DELETE FROM mysql.user WHERE User='';"
-mariadb -e "DROP DATABASE IF EXISTS test;"
-mariadb -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
-mariadb -e "FLUSH PRIVILEGES;"
+sudo mysql <<EOF
+ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${MYSQL_ROOT_PASS}');
+DELETE FROM mysql.user WHERE User='';
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+FLUSH PRIVILEGES;
+EOF
 
 echo "[OK] MariaDB secured. Root password generated."
 echo
+
 # ------------------------------------------------------------
 # 8. Install phpMyAdmin
 # ------------------------------------------------------------
@@ -254,7 +243,7 @@ echo
 # 10. Create basic PHP test
 # ------------------------------------------------------------
 
-echo "==> Creating PHP test page... 安裝階段測試用"
+echo "==> Creating PHP test page..."
 
 cat > "${WEB_ROOT}/index.php" <<'EOF'
 <?php
@@ -281,7 +270,7 @@ mkdir -p "${SSL_DIR}"
 # 12. Create self-signed certificate
 # ------------------------------------------------------------
 
-echo "==> Creating self-signed certificate...  僅供第一階段初始用"
+echo "==> Creating self-signed certificate..."
 
 openssl req \
     -x509 \
@@ -306,9 +295,7 @@ echo "==> Configuring HTTPS..."
 
 cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 <VirtualHost *:443>
-
     ServerName localhost
-
     DocumentRoot ${WEB_ROOT}
 
     SSLEngine on
@@ -323,15 +310,16 @@ cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 
     ErrorLog \${APACHE_LOG_DIR}/webserver-error.log
     CustomLog \${APACHE_LOG_DIR}/webserver-access.log combined
-
 </VirtualHost>
 EOF
+
 cat > /etc/apache2/sites-available/redirect-ssl.conf <<EOF
 <VirtualHost *:80>
     ServerName localhost
     Redirect permanent / https://localhost/
 </VirtualHost>
 EOF
+
 a2ensite redirect-ssl.conf
 a2dissite 000-default.conf 2>/dev/null || true
 a2dissite default-ssl.conf 2>/dev/null || true
@@ -363,13 +351,10 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
         code { font-weight: bold; color: #d9534f; }
     </style>
 </head>
-
 <body>
 
 <h1>Ubuntu Web Server</h1>
-
 <p>Base installation completed.</p>
-
 <hr>
 
 <h2>Database Credentials (MariaDB)</h2>
@@ -379,9 +364,7 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
 </div>
 
 <hr>
-
 <h2>System</h2>
-
 <ul>
     <li>Ubuntu: OK</li>
     <li>Apache: OK</li>
@@ -392,7 +375,6 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
 </ul>
 
 <hr>
-
 <p>Phase 2 configuration wizard will be installed here.</p>
 
 </body>
@@ -420,84 +402,45 @@ chmod 755 "${DATA_DIR}/backup"
 echo "[OK] Basic permissions configured"
 echo
 
-
-# ------------------------------------------------------------
-# Set global Apache ServerName
-# ------------------------------------------------------------
-
 SERVER_HOSTNAME=$(hostname)
-
 echo "ServerName ${SERVER_HOSTNAME}" > /etc/apache2/conf-available/servername.conf
-
 a2enconf servername
 
 # ------------------------------------------------------------
-# 16. Apache configuration test
+# 16. Apache configuration test & Restart
 # ------------------------------------------------------------
 
 echo "==> Testing Apache configuration..."
-
 apache2ctl configtest
-
 echo
-
-# ------------------------------------------------------------
-# 17. Restart services
-# ------------------------------------------------------------
 
 echo "==> Restarting services..."
-
 systemctl restart apache2
 systemctl restart mariadb
-
 echo
 
 # ------------------------------------------------------------
-# 18. Final status
+# 17. Calculate Elapsed Time & Print Summary
 # ------------------------------------------------------------
 
-echo "=============================================="
-echo " Installation completed"
-echo "=============================================="
-echo
-
-echo "Apache:"
-systemctl is-active apache2
-
-echo
-echo "MariaDB:"
-systemctl is-active mariadb
-
-echo
-echo "PHP:"
-php -v | head -n 1
-
-echo
-echo "Data:"
-ls -ld /data
-
-# ------------------------------------------------------------
-# Detect Server IP
-# ------------------------------------------------------------
+END_SEC=$(date +%s)
+ELAPSED_SEC=$((END_SEC - START_SEC))
+MINUTES=$((ELAPSED_SEC / 60))
+SECONDS=$((ELAPSED_SEC % 60))
 
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
 echo "=============================================="
-echo " Next step .."
+echo " Installation Completed Successfully!"
+echo " Total Elapsed Time: ${MINUTES}m ${SECONDS}s"
 echo "=============================================="
 echo
-echo "HTTP:"
-echo "  http://${SERVER_IP}/"
-echo "HTTPS:"
-echo "  https://${SERVER_IP}/"
-echo "Configuration:"
-echo "  https://${SERVER_IP}/my_config/"
-echo
-echo "phpMyAdmin:"
-echo "  https://${SERVER_IP}/phpmyadmin/"
+echo "HTTP:          http://${SERVER_IP}/"
+echo "HTTPS:         https://${SERVER_IP}/"
+echo "Configuration: https://${SERVER_IP}/my_config/"
+echo "phpMyAdmin:    https://${SERVER_IP}/phpmyadmin/"
 echo 
 echo "MariaDB Root Credentials:"
 echo "  Username: root"
 echo "  Password: ${MYSQL_ROOT_PASS}"
 echo "=============================================="
-
