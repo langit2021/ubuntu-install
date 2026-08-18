@@ -166,8 +166,11 @@ echo
 # ------------------------------------------------------------
 echo "==> Creating maintenance user (op) and generating credentials..."
 
-OP_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
-MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+#OP_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+#MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+# 測試階段固定密碼 (預計於 PHP 階段調整為動態管理)
+OP_PASS="KXP1AEEuAsaqDWn"
+MYSQL_ROOT_PASS="KXP1AEEuAsaqDWn"
 PMA_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
 
 if ! id "op" &>/dev/null; then
@@ -216,7 +219,7 @@ echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selecti
 echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
 apt-get install -y phpmyadmin
 
-# 啟用 phpMyAdmin 官方提供的 Apache Alias 設定檔 (對應 /phpmyadmin)
+# 啟用 phpMyAdmin 官方提供的 Apache Alias 設定檔
 a2enconf phpmyadmin
 
 # 設定 phpMyAdmin 允許 root 密碼登入
@@ -226,7 +229,7 @@ if [ -f /etc/phpmyadmin/config.inc.php ]; then
     fi
 fi
 
-# 初始化 MariaDB 帳號與權限 (相容語法)
+# 初始化 MariaDB 帳號與權限 (使用固定密碼 KXP1AEEuAsaqDWn)
 sudo mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 DELETE FROM mysql.user WHERE User='';
@@ -258,9 +261,8 @@ EOF
 chmod 660 /etc/phpmyadmin/config-db.php
 chown root:www-data /etc/phpmyadmin/config-db.php
 
-echo "[OK] phpMyAdmin configured via Apache Alias"
+echo "[OK] phpMyAdmin configured"
 echo
-
 # ------------------------------------------------------------
 # 10. 配置 SSL 憑證與 Apache VirtualHost
 # ------------------------------------------------------------
