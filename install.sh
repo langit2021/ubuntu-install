@@ -203,7 +203,9 @@ echo
 echo "==> Installing phpMyAdmin..."
 
 export DEBIAN_FRONTEND=noninteractive
-
+echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
+echo "phpmyadmin phpmyadmin/app-password-confirm password " | debconf-set-selections
+echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
 apt-get install -y phpmyadmin
 
 if [ -d /usr/share/phpmyadmin ]; then
@@ -307,6 +309,13 @@ cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 
 </VirtualHost>
 EOF
+cat > /etc/apache2/sites-available/redirect-ssl.conf <<EOF
+<VirtualHost *:80>
+    ServerName localhost
+    Redirect permanent / https://localhost/
+</VirtualHost>
+EOF
+a2ensite redirect-ssl.conf
 a2dissite 000-default.conf 2>/dev/null || true
 a2dissite default-ssl.conf 2>/dev/null || true
 a2ensite webserver-ssl.conf
