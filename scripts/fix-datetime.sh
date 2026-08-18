@@ -1,15 +1,9 @@
-#!/bin/bash
-if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root."
-    exit 1
-fi
+#!/usr/bin/env bash
+set -e
 echo "================================"
-echo " Ubuntu Install Framework"
-echo " Version 0.1"
-echo " curl -sL https://raw.githubusercontent.com/langit2021/ubuntu-install/main/install.sh | sudo bash"
-echo "================================"
+echo " Fix date time"
 
-echo "Hello World  pc 2.0"
+
 
 #set -e
 
@@ -27,8 +21,4 @@ else
     echo "警告: 無法讀取 HTTP 時間，跳過時間強制校正。"
 fi
 
-
-# 把  http:// 改 https://  怕有些防火牆會擋
-sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
-apt update -y
-apt install -y iputils-ping net-tools 
+echo "================================"
