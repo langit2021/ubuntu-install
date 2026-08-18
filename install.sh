@@ -18,7 +18,21 @@
 #
 # Phase 2 will be handled by PHP Web Configurator
 # ============================================================
+# ------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------
 
+START_TIME=$(date '+%Y%m%d_%H%M')
+LOG_FILE="$(pwd)/install_${START_TIME}.log"
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "=============================================="
+echo " Installation Log"
+echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
+echo " Log: ${LOG_FILE}"
+echo "=============================================="
+echo
 set -e
 
 echo "================================"
@@ -112,8 +126,6 @@ echo
 echo "==> Installing basic packages..."
 
 apt-get install -y \
-    curl \
-    wget \
     git \
     unzip \
     zip \
