@@ -367,6 +367,17 @@ chmod 755 "${DATA_DIR}/backup"
 echo "[OK] Basic permissions configured"
 echo
 
+
+# ------------------------------------------------------------
+# Set global Apache ServerName
+# ------------------------------------------------------------
+
+SERVER_HOSTNAME=$(hostname)
+
+echo "ServerName ${SERVER_HOSTNAME}" > /etc/apache2/conf-available/servername.conf
+
+a2enconf servername
+
 # ------------------------------------------------------------
 # 16. Apache configuration test
 # ------------------------------------------------------------
