@@ -130,7 +130,7 @@ echo
 # ------------------------------------------------------------
 # 6. 安裝與設定 PHP 8.3
 # ------------------------------------------------------------
-echo "==> Installing PHP 8.3 and configuring logs..."
+echo "==> Installing PHP 8.3 and configuring logs/timezone..."
 apt-get install -y \
     php8.3 \
     libapache2-mod-php8.3 \
@@ -152,8 +152,12 @@ sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /
 sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/cli/php.ini
 touch "${LOG_PHP}/php_errors.log"
 
+# 配置 PHP 時區為 Asia/Taipei
+sed -i "s|;date.timezone =|date.timezone = Asia/Taipei|g" /etc/php/8.3/apache2/php.ini
+sed -i "s|;date.timezone =|date.timezone = Asia/Taipei|g" /etc/php/8.3/cli/php.ini
+
 systemctl restart apache2
-echo "[OK] PHP 8.3 installed and logs configured"
+echo "[OK] PHP 8.3 installed, logs and timezone configured"
 echo
 
 # ------------------------------------------------------------
@@ -309,12 +313,28 @@ echo
 # ------------------------------------------------------------
 echo "==> Creating test page and /my_config interface..."
 
+# 部署首頁 (頂端帶有 /my_config 快捷連結)
 cat > "${WEB_ROOT}/index.php" <<'EOF'
-<?php
-phpinfo();
-?>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        .top-bar { background: #333; color: #fff; padding: 10px 20px; font-family: Arial, sans-serif; }
+        .top-bar a { color: #5bc0de; text-decoration: none; font-weight: bold; }
+        .top-bar a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        🚀 Web Server 測試頁面 | <a href="/my_config/">👉 前往系統組態控制台 (/my_config)</a>
+    </div>
+    <?php phpinfo(); ?>
+</body>
+</html>
 EOF
 
+# 部署 /my_config 頁面 (包含首頁按鈕與 PHP 上傳/記憶體參數)
 mkdir -p "${CONFIG_DIR}"
 cat > "${CONFIG_DIR}/index.php" <<EOF
 <?php
@@ -327,10 +347,17 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
     <style>
         body { font-family: Arial, sans-serif; margin: 30px; line-height: 1.6; }
         .credentials { background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 12px; margin: 15px 0; }
+        .nav-bar { margin-bottom: 20px; }
+        .nav-bar a { display: inline-block; padding: 8px 16px; background-color: #28a745; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; }
+        .nav-bar a:hover { background-color: #218838; }
         code { font-weight: bold; color: #d9534f; background: #eee; padding: 2px 6px; border-radius: 4px; }
     </style>
 </head>
 <body>
+
+<div class="nav-bar">
+    <a href="/">🏠 返回網站首頁</a>
+</div>
 
 <h1>Ubuntu Web Server 系統組態資訊</h1>
 <p>第一階段自動化部署已完成。</p>
@@ -348,6 +375,17 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
     <p><strong>帳號：</strong> <code>root</code></p>
     <p><strong>密碼：</strong> <code>${MYSQL_ROOT_PASS}</code></p>
 </div>
+
+<hr>
+
+<h2>PHP 關鍵效能與資源參數</h2>
+<ul>
+    <li><strong>系統預設時區 (date.timezone)：</strong> <?php echo date_default_timezone_get(); ?></li>
+    <li><strong>記憶體限制 (memory_limit)：</strong> <?php echo ini_get('memory_limit'); ?></li>
+    <li><strong>單檔案上傳上限 (upload_max_filesize)：</strong> <?php echo ini_get('upload_max_filesize'); ?></li>
+    <li><strong>POST 請求總量上限 (post_max_size)：</strong> <?php echo ini_get('post_max_size'); ?></li>
+    <li><strong>腳本最長執行時間 (max_execution_time)：</strong> <?php echo ini_get('max_execution_time'); ?> 秒</li>
+</ul>
 
 <hr>
 
