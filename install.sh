@@ -412,22 +412,27 @@ echo
 echo "Data:"
 ls -ld /data
 
-echo
+# ------------------------------------------------------------
+# Detect Server IP
+# ------------------------------------------------------------
+
+SERVER_IP=$(hostname -I | awk '{print $1}')
+
 echo "=============================================="
 echo " Next step"
 echo "=============================================="
 echo
 echo "HTTP:"
-echo "  http://SERVER-IP/"
+echo "  http://${SERVER_IP}/"
 echo
 echo "HTTPS:"
-echo "  https://SERVER-IP/"
+echo "  https://${SERVER_IP}/"
 echo
 echo "Configuration:"
-echo "  https://SERVER-IP/my_config/"
+echo "  https://${SERVER_IP}/my_config/"
 echo
 echo "phpMyAdmin:"
-echo "  https://SERVER-IP/phpmyadmin/"
+echo "  https://${SERVER_IP}/phpmyadmin/"
 echo
 echo "=============================================="
 
