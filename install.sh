@@ -20,7 +20,7 @@ echo "=== [2/5] 透過 HTTP 標頭強制同步時間（繞過 NTP 防火牆限�
 # 使用 tlsdate 或 curl 取得伺服器 Date Header，直接寫入系統時間
 HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | cut -d' ' -f2-)
 if [ -n "$HTTP_DATE" ]; then
-    date -s "$HTTP_DATE"
+    sudo date -s "$HTTP_DATE"
     sudo hwclock --systohc
     echo "時間同步成功！當前系統時間: $(date)"
 else
