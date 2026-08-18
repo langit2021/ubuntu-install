@@ -213,15 +213,15 @@ if [ -f /etc/phpmyadmin/config.inc.php ]; then
     fi
 fi
 
-# 初始化 MariaDB 帳號與權限
+# 初始化 MariaDB 帳號與權限 (已修正 MariaDB 語法)
 sudo mysql <<EOF
-ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${MYSQL_ROOT_PASS}');
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 DELETE FROM mysql.user WHERE User='';
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 
 CREATE DATABASE IF NOT EXISTS phpmyadmin;
-CREATE USER IF NOT EXISTS 'phpmyadmin'@'localhost' IDENTIFIED VIA mysql_native_password BY '${PMA_PASS}';
+CREATE USER IF NOT EXISTS 'phpmyadmin'@'localhost' IDENTIFIED BY '${PMA_PASS}';
 GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
 
 FLUSH PRIVILEGES;
