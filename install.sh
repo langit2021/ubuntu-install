@@ -34,7 +34,8 @@ echo " Log: ${LOG_FILE}"
 echo "=============================================="
 echo
 set -e
-
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a # 自動重啟不受影響的服務，避免跳出紫底藍字的彈出選單
 echo "================================"
 echo " Ubuntu Install Framework"
 echo " Version 0.12"
@@ -45,13 +46,11 @@ echo "=== 設定系統時區為 Asia/Taipei ==="
 timedatectl set-timezone Asia/Taipei || true
 echo "=== 透過 HTTP 標頭強制同步時間（繞過 NTP 防火牆限制）==="
 # 使用 tlsdate 或 curl 取得伺服器 Date Header，直接寫入系統時間
-HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | cut -d' ' -f2-)
+HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | tr -d '\r' | cut -d' ' -f2-)
 if [ -n "$HTTP_DATE" ]; then
-    date -s "$HTTP_DATE"
+    date -u -s "$HTTP_DATE"
     timedatectl set-local-rtc 0 2>/dev/null || true
     echo "時間同步成功！當前系統時間: $(date)"
-else
-    echo "警告: 無法讀取 HTTP 時間，跳過時間強制校正。"
 fi
 
 # 把  http:// 改 https://  怕有些防火牆會擋
@@ -269,7 +268,7 @@ openssl req \
     -newkey rsa:2048 \
     -keyout "${SSL_DIR}/server.key" \
     -out "${SSL_DIR}/server.crt" \
-    -subj "/C=TW/ST=Taiwan/L=Taipei/O=WebServer/OU=IT/C=TW/CN=$(hostname)"
+    -subj "/C=TW/ST=Taiwan/L=Taipei/O=WebServer/OU=IT/CN=$(hostname)"
 
 chmod 600 "${SSL_DIR}/server.key"
 chmod 644 "${SSL_DIR}/server.crt"
@@ -305,7 +304,8 @@ cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 
 </VirtualHost>
 EOF
-
+a2dissite 000-default.conf 2>/dev/null || true
+a2dissite default-ssl.conf 2>/dev/null || true
 a2ensite webserver-ssl.conf
 
 systemctl reload apache2
