@@ -28,6 +28,9 @@ if [ -n "$HTTP_DATE" ]; then
     echo "時間同步成功！當前系統時間: $(date)"
 fi
 
+GIT_ACCOUNT=langit2021
+GIT_PROJECT=ubuntu-install
+
 START_TIME=$(date '+%Y%m%d_%H%M')
 START_SEC=$(date +%s)
 LOG_FILE="$(pwd)/install_${START_TIME}.log"
@@ -333,11 +336,11 @@ echo "[OK] Apache VirtualHost and Aliases configured"
 echo
 
 # ------------------------------------------------------------
-# 11. 部署測試頁面與 /my_config 頁面
+# 11. 部署測試頁面與自動取得 my_config.sh
 # ------------------------------------------------------------
-echo "==> Creating test page and /my_config interface..."
+echo "==> Creating test page and getting my_config.sh..."
 
-# 部署首頁 (僅於 /data/www 下建立單純的 index.php)
+# 1. 部署首頁
 cat > "${WEB_ROOT}/index.php" <<'EOF'
 <!DOCTYPE html>
 <html lang="zh-TW">
@@ -358,85 +361,26 @@ cat > "${WEB_ROOT}/index.php" <<'EOF'
 </html>
 EOF
 
-# 寫入獨立控制台網頁至 /data/my_config/index.php
-cat > "${DATA_DIR}/my_config/index.php" <<EOF
-<?php
-?>
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <title>Ubuntu Web Server Configuration</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 30px; line-height: 1.6; }
-        .credentials { background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 12px; margin: 15px 0; }
-        .nav-bar { margin-bottom: 20px; }
-        .nav-bar a { display: inline-block; padding: 8px 16px; background-color: #28a745; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; }
-        .nav-bar a:hover { background-color: #218838; }
-        code { font-weight: bold; color: #d9534f; background: #eee; padding: 2px 6px; border-radius: 4px; }
-    </style>
-</head>
-<body>
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MY_CONFIG_FILE="${SCRIPT_DIR}/my_config.sh"
 
-<div class="nav-bar">
-    <a href="/">🏠 返回網站首頁</a>
-</div>
+# 2. 若本地不存在 my_config.sh，則自動從 Git 儲存庫下載 (請替換為您的 Git Raw 網址)
+GIT_RAW_URL="https://raw.githubusercontent.com/${GIT_ACCOUNT}/${GIT_PROJECT}/main/my_config.sh"
 
-<h1>Ubuntu Web Server 系統組態資訊</h1>
-<p>第一階段自動化部署已完成。</p>
+if [ ! -f "${MY_CONFIG_FILE}" ]; then
+    echo "==> my_config.sh not found locally, downloading from Git..."
+    curl -sSL "${GIT_RAW_URL}" -o "${MY_CONFIG_FILE}" || wget -q "${GIT_RAW_URL}" -O "${MY_CONFIG_FILE}"
+fi
 
-<hr>
+# 3. 執行 my_config.sh
+if [ -f "${MY_CONFIG_FILE}" ]; then
+    chmod +x "${MY_CONFIG_FILE}"
+    OP_PASS="${OP_PASS}" MYSQL_ROOT_PASS="${MYSQL_ROOT_PASS}" "${MY_CONFIG_FILE}"
+else
+    echo "ERROR: Failed to obtain my_config.sh, skipping config page deployment."
+fi
 
-<h2>系統維護帳號 (SFTP / SSH)</h2>
-<div class="credentials">
-    <p><strong>帳號：</strong> <code>op</code></p>
-    <p><strong>密碼：</strong> <code>${OP_PASS}</code></p>
-</div>
-
-<h2>資料庫管理帳號 (MariaDB)</h2>
-<div class="credentials">
-    <p><strong>帳號：</strong> <code>root</code></p>
-    <p><strong>密碼：</strong> <code>${MYSQL_ROOT_PASS}</code></p>
-</div>
-
-<hr>
-
-<h2>PHP 關鍵效能與資源參數</h2>
-<ul>
-    <li><strong>系統預設時區 (date.timezone)：</strong> <?php echo date_default_timezone_get(); ?></li>
-    <li><strong>記憶體限制 (memory_limit)：</strong> <?php echo ini_get('memory_limit'); ?></li>
-    <li><strong>單檔案上傳上限 (upload_max_filesize)：</strong> <?php echo ini_get('upload_max_filesize'); ?></li>
-    <li><strong>POST 請求總量上限 (post_max_size)：</strong> <?php echo ini_get('post_max_size'); ?></li>
-    <li><strong>腳本最長執行時間 (max_execution_time)：</strong> <?php echo ini_get('max_execution_time'); ?> 秒</li>
-</ul>
-
-<hr>
-
-<h2>集中化目錄與服務狀態</h2>
-<ul>
-    <li>Ubuntu 版本：OK (24.04 LTS)</li>
-    <li>Apache：OK</li>
-    <li>PHP 版本：<?php echo PHP_VERSION; ?></li>
-    <li>MariaDB：OK</li>
-    <li>phpMyAdmin：Installed</li>
-    <li>網頁目錄 (/data/www)：<?php echo is_dir('/data/www') ? 'OK' : 'ERROR'; ?></li>
-    <li>資料庫目錄 (/data/mysql)：<?php echo is_dir('/data/mysql') ? 'OK' : 'ERROR'; ?></li>
-    <li>Apache Log (/data/logs/apache)：<?php echo is_dir('/data/logs/apache') ? 'OK' : 'ERROR'; ?></li>
-    <li>PHP Log (/data/logs/php)：<?php echo is_dir('/data/logs/php') ? 'OK' : 'ERROR'; ?></li>
-</ul>
-
-<hr>
-<p>第二階段互動式控制台將於此頁面擴充。</p>
-
-</body>
-</html>
-EOF
-
-# 設定 /data/my_config 權限歸屬
-chown -R www-data:www-data "${DATA_DIR}/my_config"
-chmod -R 755 "${DATA_DIR}/my_config"
-
-echo "[OK] Test page & my_config created as virtual directories"
+echo "[OK] Test page & external my_config script execution completed"
 echo
 
 # ------------------------------------------------------------
