@@ -7,7 +7,8 @@
 # ============================================================
 
 set -e
-
+# 重置腳本運行計時器
+SECONDS=0
 # ------------------------------------------------------------
 # Checkpoint / 章節狀態檢查機制
 # ------------------------------------------------------------
@@ -438,8 +439,9 @@ EOF
     chmod +x /usr/local/bin/backup_www.sh
     (crontab -l 2>/dev/null | grep -v "/usr/local/bin/backup_www.sh"; echo "0 3 * * * /usr/local/bin/backup_www.sh") | crontab -
     
-    # 允許 www-data 讀取 root 的 crontab 檔以供 my_config 畫面檢測
-    chmod 644 /var/spool/cron/crontabs/root 2>/dev/null || true
+    # 建立可供網頁讀取的 Crontab 狀態標記檔
+    crontab -l > /data/.cron_status
+    chmod 644 /data/.cron_status
 }
 
 run_step "STEP_12_BACKUP" "設定每日 03:00 自動備份排程" step_setup_backup
@@ -471,16 +473,16 @@ run_step "STEP_13_RESTART" "設定權限並重啟相關服務" step_permissions_
 # ------------------------------------------------------------
 # 14. 結算與輸出
 # ------------------------------------------------------------
-END_SEC=$(date +%s)
-ELAPSED_SEC=$((END_SEC - START_SEC))
+# 直接採用 SECONDS 變數，不受時間同步校正影響
+ELAPSED_SEC=$SECONDS
 MINUTES=$((ELAPSED_SEC / 60))
-SECONDS=$((ELAPSED_SEC % 60))
+SECONDS_LEFT=$((ELAPSED_SEC % 60))
 
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
 echo "=============================================="
 echo " 安裝完成！(Installation Completed)"
-echo " 總耗時：${MINUTES} 分 ${SECONDS} 秒"
+echo " 總耗時：${MINUTES} 分 ${SECONDS_LEFT} 秒"
 echo "=============================================="
 echo
 echo "HTTP 網址:       http://${SERVER_IP}/"

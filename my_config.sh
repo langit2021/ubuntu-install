@@ -37,13 +37,9 @@ try {
 }
 
 // 2. 檢測 Cron 排程 (直接檢測系統 Root 的 crontab 檔案或備份檔是否存在)
-\$root_cron = @file_get_contents('/var/spool/cron/crontabs/root');
-if ($root_cron === false) {
-    // 若無權限直接讀取，改用 sudo / cat 或系統檔案判斷
-    \$root_cron = shell_exec('cat /var/spool/cron/crontabs/root 2>/dev/null');
-}
-\$has_backup_cron = ($root_cron !== null && $root_cron !== false && strpos($root_cron, '/usr/local/bin/backup_www.sh') !== false);
-
+\$cron_status_file = '/data/.cron_status';
+\$cron_content = file_exists(\$cron_status_file) ? file_get_contents(\$cron_status_file) : '';
+\$has_backup_cron = (strpos(\$cron_content, '/usr/local/bin/backup_www.sh') !== false);
 
 
 // 3. 取得 Apache 參數設定
