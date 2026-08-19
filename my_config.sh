@@ -40,6 +40,7 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
 
 <div class="nav-bar">
     <a href="/">🏠 返回網站首頁</a>
+    <a href="/phpmyadmin/" target="_blank" style="background-color: #17a2b8;">🗄️ 前往 phpMyAdmin</a>
 </div>
 
 <h1>Ubuntu Web Server 系統組態資訊</h1>

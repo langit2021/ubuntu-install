@@ -411,9 +411,36 @@ systemctl restart mariadb
 
 echo "[OK] Services restarted successfully"
 echo
-
 # ------------------------------------------------------------
-# 13. 計算耗時並輸出終端資訊
+# 13. 建立自動備份腳本與 Cron 排程
+# ------------------------------------------------------------
+echo "==> Setting up daily automated backup at 03:00..."
+
+cat > /usr/local/bin/backup_www.sh <<'EOF'
+#!/usr/bin/env bash
+set -e
+
+BACKUP_DIR="/data/backup"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+TARGET_FILE="${BACKUP_DIR}/www_backup_${TIMESTAMP}.tar.gz"
+
+mkdir -p "${BACKUP_DIR}"
+
+# 備份 /data/www 目錄
+tar -czf "${TARGET_FILE}" -C /data www
+
+# 清除超過 7 天的歷史備份
+find "${BACKUP_DIR}" -type f -name "www_backup_*.tar.gz" -mtime +7 -delete
+EOF
+
+chmod +x /usr/local/bin/backup_www.sh
+
+# 設定 Cron 排程：每日 03:00 執行
+(crontab -l 2>/dev/null | grep -v "/usr/local/bin/backup_www.sh"; echo "0 3 * * * /usr/local/bin/backup_www.sh") | crontab -
+
+echo "[OK] Daily backup job set for 03:00 AM"
+# ------------------------------------------------------------
+# 14. 計算耗時並輸出終端資訊
 # ------------------------------------------------------------
 END_SEC=$(date +%s)
 ELAPSED_SEC=$((END_SEC - START_SEC))
