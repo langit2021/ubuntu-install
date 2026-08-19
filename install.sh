@@ -116,10 +116,13 @@ apt-get install -y \
     lsb-release \
     software-properties-common \
     apt-transport-https \
-    rsync
+    rsync \
+    cron
+
+systemctl enable cron
+systemctl start cron
 
 echo "[OK] Base packages installed"
-echo
 
 # ------------------------------------------------------------
 # 5. 安裝 Apache
