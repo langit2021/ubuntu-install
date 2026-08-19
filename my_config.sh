@@ -36,9 +36,15 @@ try {
     // 忽略資料庫連線例外
 }
 
-// 2. 檢測 Cron 排程
-\$cron_output = shell_exec('crontab -l 2>/dev/null');
-\$has_backup_cron = (strpos(\$cron_output, '/usr/local/bin/backup_www.sh') !== false);
+// 2. 檢測 Cron 排程 (直接檢測系統 Root 的 crontab 檔案或備份檔是否存在)
+\$root_cron = @file_get_contents('/var/spool/cron/crontabs/root');
+if ($root_cron === false) {
+    // 若無權限直接讀取，改用 sudo / cat 或系統檔案判斷
+    \$root_cron = shell_exec('cat /var/spool/cron/crontabs/root 2>/dev/null');
+}
+\$has_backup_cron = ($root_cron !== null && $root_cron !== false && strpos($root_cron, '/usr/local/bin/backup_www.sh') !== false);
+
+
 
 // 3. 取得 Apache 參數設定
 \$apache_timeout = shell_exec("apache2ctl -t -D DUMP_RUN_CFG 2>/dev/null | grep -i Timeout || grep -Ri '^Timeout' /etc/apache2/ 2>/dev/null | head -n1 | awk '{print \$2}'") ?: '300 (Default)';

@@ -437,6 +437,9 @@ EOF
 
     chmod +x /usr/local/bin/backup_www.sh
     (crontab -l 2>/dev/null | grep -v "/usr/local/bin/backup_www.sh"; echo "0 3 * * * /usr/local/bin/backup_www.sh") | crontab -
+    
+    # 允許 www-data 讀取 root 的 crontab 檔以供 my_config 畫面檢測
+    chmod 644 /var/spool/cron/crontabs/root 2>/dev/null || true
 }
 
 run_step "STEP_12_BACKUP" "設定每日 03:00 自動備份排程" step_setup_backup
