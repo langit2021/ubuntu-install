@@ -2,31 +2,65 @@
 
 # ============================================================
 # Ubuntu Web Server Installer
-# Version: 0.3
+# Version: 0.4
 # Target: Ubuntu Server 24.04 LTS
-#
-# Phase 1:
-#   - Basic system packages & timezone fix
-#   - Apache + PHP 8.3 + MariaDB + phpMyAdmin
-#   - Centralized /data structure (www, mysql, logs/apache, logs/php)
-#   - Maintenance user (op) & random password generation
-#   - Self-signed HTTPS & /my_config info page
 # ============================================================
 
 set -e
 
 # ------------------------------------------------------------
+# Checkpoint / 章節狀態檢查機制
+# ------------------------------------------------------------
+PROGRESS_FILE="/data/.install_progress"
+mkdir -p /data
+
+is_step_completed() {
+    local step_name="$1"
+    if [ -f "$PROGRESS_FILE" ] && grep -q "^${step_name}$" "$PROGRESS_FILE"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+mark_step_completed() {
+    local step_name="$1"
+    echo "$step_name" >> "$PROGRESS_FILE"
+}
+
+run_step() {
+    local step_id="$1"
+    local step_desc="$2"
+    local step_func="$3"
+
+    echo "------------------------------------------------------------"
+    if is_step_completed "$step_id"; then
+        echo "[SKIP] 章節 [${step_id}]: ${step_desc} (先前已成功執行，自動跳過)"
+        echo
+        return 0
+    fi
+
+    echo "==> [EXEC] 開始執行章節 [${step_id}]: ${step_desc}..."
+    $step_func
+    mark_step_completed "$step_id"
+    echo "[OK] 章節 [${step_id}] 執行完成！"
+    echo
+}
+
+# ------------------------------------------------------------
 # 1. 時間同步與日誌準備
 # ------------------------------------------------------------
-echo "=== 設定系統時區為 Asia/Taipei ==="
-timedatectl set-timezone Asia/Taipei || true
-echo "=== 透過 HTTP 標頭強制同步時間 ==="
-HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | tr -d '\r' | cut -d' ' -f2-)
-if [ -n "$HTTP_DATE" ]; then
-    date -u -s "$HTTP_DATE"
-    timedatectl set-local-rtc 0 2>/dev/null || true
-    echo "時間同步成功！當前系統時間: $(date)"
-fi
+step_timezone_and_log() {
+    echo "=== 設定系統時區為 Asia/Taipei ==="
+    timedatectl set-timezone Asia/Taipei || true
+    echo "=== 透過 HTTP 標頭強制同步時間 ==="
+    HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | tr -d '\r' | cut -d' ' -f2-)
+    if [ -n "$HTTP_DATE" ]; then
+        date -u -s "$HTTP_DATE"
+        timedatectl set-local-rtc 0 2>/dev/null || true
+        echo "時間同步成功！當前系統時間: $(date)"
+    fi
+}
 
 GIT_ACCOUNT=langit2021
 GIT_PROJECT=ubuntu-install
@@ -46,7 +80,7 @@ echo
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="0.3"
+VERSION="0.4"
 DATA_DIR="/data"
 WEB_ROOT="${DATA_DIR}/www"
 MYSQL_DIR="${DATA_DIR}/mysql"
@@ -55,189 +89,193 @@ LOG_PHP="${DATA_DIR}/logs/php"
 CONFIG_DIR="${WEB_ROOT}/my_config"
 SSL_DIR="/etc/apache2/ssl"
 
-echo "=============================================="
-echo " Ubuntu Web Server Installer"
-echo " Version: ${VERSION}"
-echo " Target : Ubuntu Server 24.04 LTS"
-echo "=============================================="
-echo
+run_step "STEP_01_TIME" "時間同步與日誌初始化" step_timezone_and_log
 
 # ------------------------------------------------------------
 # 2. 系統環境檢查
 # ------------------------------------------------------------
-if [ "$EUID" -ne 0 ]; then
-    echo "ERROR: Please run this script as root."
-    exit 1
-fi
+step_env_check() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "ERROR: Please run this script as root."
+        exit 1
+    fi
 
-if [ ! -f /etc/os-release ]; then
-    echo "ERROR: Cannot detect operating system."
-    exit 1
-fi
+    if [ ! -f /etc/os-release ]; then
+        echo "ERROR: Cannot detect operating system."
+        exit 1
+    fi
 
-source /etc/os-release
+    source /etc/os-release
 
-if [ "$ID" != "ubuntu" ] || [ "$VERSION_ID" != "24.04" ]; then
-    echo "ERROR: This script requires Ubuntu 24.04 LTS."
-    exit 1
-fi
+    if [ "$ID" != "ubuntu" ] || [ "$VERSION_ID" != "24.04" ]; then
+        echo "ERROR: This script requires Ubuntu 24.04 LTS."
+        exit 1
+    fi
+    echo "[OK] Ubuntu ${VERSION_ID} 環境驗證符合"
+}
 
-echo "[OK] Ubuntu ${VERSION_ID}"
-echo
+run_step "STEP_02_CHECK" "系統環境檢查" step_env_check
 
 # ------------------------------------------------------------
 # 3. 建立 /data 集中化目錄結構
 # ------------------------------------------------------------
-echo "==> Creating /data directory structure..."
-mkdir -p "${WEB_ROOT}"
-mkdir -p "${MYSQL_DIR}"
-mkdir -p "${LOG_APACHE}"
-mkdir -p "${LOG_PHP}"
-mkdir -p "${DATA_DIR}/backup"
-mkdir -p "${DATA_DIR}/my_config"
-echo "[OK] Directory structure created"
-echo
+step_create_dirs() {
+    mkdir -p "${WEB_ROOT}"
+    mkdir -p "${MYSQL_DIR}"
+    mkdir -p "${LOG_APACHE}"
+    mkdir -p "${LOG_PHP}"
+    mkdir -p "${DATA_DIR}/backup"
+    mkdir -p "${DATA_DIR}/my_config"
+}
+
+run_step "STEP_03_DIRS" "建立 /data 集中化目錄結構" step_create_dirs
 
 # ------------------------------------------------------------
-# 4. 更新套件源與安裝基礎工具
+# 4. 更新套件源與安裝基礎工具 (含 Cron)
 # ------------------------------------------------------------
-echo "==> Updating package information and installing base packages..."
-sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
-apt-get update
-apt-get install -y \
-    iputils-ping \
-    net-tools \
-    git \
-    unzip \
-    zip \
-    vim \
-    ca-certificates \
-    openssl \
-    lsb-release \
-    software-properties-common \
-    apt-transport-https \
-    rsync \
-    cron
+step_install_base() {
+    sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
+    apt-get update
+    apt-get install -y \
+        iputils-ping \
+        net-tools \
+        git \
+        unzip \
+        zip \
+        vim \
+        ca-certificates \
+        openssl \
+        lsb-release \
+        software-properties-common \
+        apt-transport-https \
+        rsync \
+        cron
 
-systemctl enable cron
-systemctl start cron
+    systemctl enable cron
+    systemctl start cron
+}
 
-echo "[OK] Base packages installed"
+run_step "STEP_04_BASE" "更新套件源與安裝基礎工具" step_install_base
 
 # ------------------------------------------------------------
 # 5. 安裝 Apache
 # ------------------------------------------------------------
-echo "==> Installing Apache..."
-apt-get install -y apache2
-systemctl enable apache2
-systemctl start apache2
-echo "[OK] Apache installed"
-echo
+step_install_apache() {
+    apt-get install -y apache2
+    systemctl enable apache2
+    systemctl start apache2
+}
+
+run_step "STEP_05_APACHE" "安裝與啟動 Apache 服務" step_install_apache
 
 # ------------------------------------------------------------
 # 6. 安裝與設定 PHP 8.3
 # ------------------------------------------------------------
-echo "==> Installing PHP 8.3 and configuring logs/timezone..."
-apt-get install -y \
-    php8.3 \
-    libapache2-mod-php8.3 \
-    php8.3-cli \
-    php8.3-common \
-    php8.3-mysql \
-    php8.3-curl \
-    php8.3-gd \
-    php8.3-mbstring \
-    php8.3-xml \
-    php8.3-zip \
-    php8.3-bcmath \
-    php8.3-intl
+step_install_php() {
+    apt-get install -y \
+        php8.3 \
+        libapache2-mod-php8.3 \
+        php8.3-cli \
+        php8.3-common \
+        php8.3-mysql \
+        php8.3-curl \
+        php8.3-gd \
+        php8.3-mbstring \
+        php8.3-xml \
+        php8.3-zip \
+        php8.3-bcmath \
+        php8.3-intl
 
-a2enmod php8.3
+    a2enmod php8.3
 
-# 配置 PHP Log 存放於 /data/logs/php/
-sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/apache2/php.ini
-sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/cli/php.ini
-touch "${LOG_PHP}/php_errors.log"
+    # 配置 PHP Log 存放於 /data/logs/php/
+    sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/apache2/php.ini
+    sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/cli/php.ini
+    touch "${LOG_PHP}/php_errors.log"
 
-# 配置 PHP 時區為 Asia/Taipei
-sed -i "s|;date.timezone =|date.timezone = Asia/Taipei|g" /etc/php/8.3/apache2/php.ini
-sed -i "s|;date.timezone =|date.timezone = Asia/Taipei|g" /etc/php/8.3/cli/php.ini
+    # 配置 PHP 時區為 Asia/Taipei
+    sed -i "s|;date.timezone =|date.timezone = Asia/Taipei|g" /etc/php/8.3/apache2/php.ini
+    sed -i "s|;date.timezone =|date.timezone = Asia/Taipei|g" /etc/php/8.3/cli/php.ini
 
-systemctl restart apache2
-echo "[OK] PHP 8.3 installed, logs and timezone configured"
-echo
+    systemctl restart apache2
+}
+
+run_step "STEP_06_PHP" "安裝與設定 PHP 8.3" step_install_php
 
 # ------------------------------------------------------------
-# 7. 建立維護帳號 (op) 與產出隨機密碼
+# 7. 建立維護帳號 (op) 與 SFTP Chroot 限制
 # ------------------------------------------------------------
-echo "==> Creating maintenance user (op) and generating credentials..."
-
-#OP_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
-#MYSQL_ROOT_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
-# 測試階段固定密碼 (預計於 PHP 階段調整為動態管理)
 OP_PASS="KXP1AEEuAsaqDWn"
 MYSQL_ROOT_PASS="KXP1AEEuAsaqDWn"
-PMA_PASS=$(openssl rand -base64 12 | tr -d '/+' | cut -c1-16)
+PMA_PASS="KXP1AEEuAsaqDWn"
 
-if ! id "op" &>/dev/null; then
-    useradd -m -s /bin/bash op
-fi
-echo "op:${OP_PASS}" | chpasswd
-usermod -aG www-data op
+step_setup_op_user() {
+    if ! id "op" &>/dev/null; then
+        useradd -d /data/www -s /bin/bash op
+    fi
+    echo "op:${OP_PASS}" | chpasswd
+    usermod -aG www-data op
 
-# 在 /home/op 建立快捷軟連結 (SFTP 登入即可直達)
-ln -sfn "${WEB_ROOT}" /home/op/www
-ln -sfn "${DATA_DIR}/backup" /home/op/backup
-chown -h op:op /home/op/www /home/op/backup
+    # SFTP Chroot 目錄權限要求
+    chown root:root /data
+    chmod 755 /data
 
-# 設定 SSH 終端機登入時預設自動進入 /data/www
-if ! grep -q "cd /data/www" /home/op/.bashrc 2>/dev/null; then
-    echo "cd /data/www" >> /home/op/.bashrc
-fi
+    cat > /etc/ssh/sshd_config.d/sftp-op.conf <<EOF
+Match User op
+    ChrootDirectory /data
+    ForceCommand internal-sftp
+    AllowTcpForwarding no
+    X11Forwarding no
+EOF
 
-echo "[OK] Maintenance user created with shortcuts (www, backup)"
-echo
+    systemctl restart ssh || systemctl restart sshd
+}
+
+run_step "STEP_07_OP_USER" "建立維護帳號 (op) 並配置 SFTP Chroot" step_setup_op_user
 
 # ------------------------------------------------------------
-# 8. 安裝 MariaDB 並移轉資料目錄至 /data/mysql
+# 8. 重置與安裝 MariaDB，移轉資料目錄至 /data/mysql
 # ------------------------------------------------------------
-echo "==> Installing MariaDB & migrating datadir to /data/mysql..."
-apt-get install -y mariadb-server mariadb-client
-systemctl enable mariadb
+step_install_mariadb() {
+    echo "==> 強制停止舊有 MariaDB 服務並徹底清空既有資料檔..."
+    systemctl stop mariadb 2>/dev/null || true
 
-# 停止服務進行目錄轉移
-systemctl stop mariadb
-if [ -d "/var/lib/mysql" ] && [ ! -f "${MYSQL_DIR}/ibdata1" ]; then
-    rsync -av /var/lib/mysql/ "${MYSQL_DIR}/"
-fi
-sed -i "s|datadir\s*=\s*/var/lib/mysql|datadir = ${MYSQL_DIR}|g" /etc/mysql/mariadb.conf.d/50-server.cnf
-chown -R mysql:mysql "${MYSQL_DIR}"
-systemctl start mariadb
+    # 強制清空預設與目標 MySQL 資料目錄，確保重複執行時能從零初始
+    rm -rf /var/lib/mysql/*
+    rm -rf "${MYSQL_DIR}"/*
 
-echo "[OK] MariaDB installed and relocated to /data/mysql"
-echo
+    apt-get install -y mariadb-server mariadb-client
+    systemctl enable mariadb
+
+    systemctl stop mariadb
+    if [ -d "/var/lib/mysql" ] && [ -f "/var/lib/mysql/ibdata1" ]; then
+        rsync -av /var/lib/mysql/ "${MYSQL_DIR}/"
+    fi
+    sed -i "s|datadir\s*=\s*/var/lib/mysql|datadir = ${MYSQL_DIR}|g" /etc/mysql/mariadb.conf.d/50-server.cnf
+    chown -R mysql:mysql "${MYSQL_DIR}"
+    systemctl start mariadb
+}
+
+run_step "STEP_08_MARIADB" "清空資料、安裝 MariaDB 並移轉至 /data/mysql" step_install_mariadb
 
 # ------------------------------------------------------------
 # 9. 安裝 phpMyAdmin 與安全性設定
 # ------------------------------------------------------------
-echo "==> Installing and configuring phpMyAdmin..."
-echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
-echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
-apt-get install -y phpmyadmin
+step_install_phpmyadmin() {
+    echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
+    echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
+    apt-get install -y phpmyadmin
 
-# 啟用 phpMyAdmin 官方提供的 Apache Alias 設定檔
-a2enconf phpmyadmin
+    a2enconf phpmyadmin
 
-# 設定 phpMyAdmin 允許 root 密碼登入
-if [ -f /etc/phpmyadmin/config.inc.php ]; then
-    if ! grep -q "AllowRoot" /etc/phpmyadmin/config.inc.php; then
-        echo "\$cfg['Servers'][\$i]['AllowRoot'] = TRUE;" >> /etc/phpmyadmin/config.inc.php
+    if [ -f /etc/phpmyadmin/config.inc.php ]; then
+        if ! grep -q "AllowRoot" /etc/phpmyadmin/config.inc.php; then
+            echo "\$cfg['Servers'][\$i]['AllowRoot'] = TRUE;" >> /etc/phpmyadmin/config.inc.php
+        fi
     fi
-fi
 
-# 1. 重設 MariaDB root 與 phpmyadmin 控制帳號
-# 使用 alter user 與 flush privileges 確保權限即時生效
-sudo mysql <<EOF
+    # 重設 MariaDB root 與 phpmyadmin 控制帳號
+    mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 DELETE FROM mysql.user WHERE User='';
 DROP DATABASE IF EXISTS test;
@@ -251,13 +289,11 @@ GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-# 2. 匯入 phpMyAdmin 基礎資料表
-if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
-    mysql -u root -p"${MYSQL_ROOT_PASS}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
-fi
+    if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
+        mysql -u root -p"${MYSQL_ROOT_PASS}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
+    fi
 
-# 3. 強制同步寫入 config-db.php 檔，確保密碼一致
-cat > /etc/phpmyadmin/config-db.php <<EOF
+    cat > /etc/phpmyadmin/config-db.php <<EOF
 <?php
 \$dbuser='phpmyadmin';
 \$dbpass='${PMA_PASS}';
@@ -268,28 +304,28 @@ cat > /etc/phpmyadmin/config-db.php <<EOF
 \$dbtype='mysql';
 EOF
 
-chmod 660 /etc/phpmyadmin/config-db.php
-chown root:www-data /etc/phpmyadmin/config-db.php
+    chmod 660 /etc/phpmyadmin/config-db.php
+    chown root:www-data /etc/phpmyadmin/config-db.php
+}
 
-echo "[OK] phpMyAdmin configured successfully"
-echo
+run_step "STEP_09_PHPMYADMIN" "安裝與配置 phpMyAdmin" step_install_phpmyadmin
+
 # ------------------------------------------------------------
 # 10. 配置 SSL 憑證與 Apache VirtualHost
 # ------------------------------------------------------------
-echo "==> Configuring Apache SSL and VirtualHost..."
-a2enmod ssl rewrite headers
-mkdir -p "${SSL_DIR}"
+step_configure_ssl() {
+    a2enmod ssl rewrite headers
+    mkdir -p "${SSL_DIR}"
 
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout "${SSL_DIR}/server.key" \
-    -out "${SSL_DIR}/server.crt" \
-    -subj "/C=TW/ST=Taiwan/L=Taipei/O=WebServer/OU=IT/CN=$(hostname)"
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout "${SSL_DIR}/server.key" \
+        -out "${SSL_DIR}/server.crt" \
+        -subj "/C=TW/ST=Taiwan/L=Taipei/O=WebServer/OU=IT/CN=$(hostname)"
 
-chmod 600 "${SSL_DIR}/server.key"
-chmod 644 "${SSL_DIR}/server.crt"
+    chmod 600 "${SSL_DIR}/server.key"
+    chmod 644 "${SSL_DIR}/server.crt"
 
-# VirtualHost 組態：加上 /my_config Alias 別名
-cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
+    cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 <VirtualHost *:443>
     ServerName localhost
     DocumentRoot ${WEB_ROOT}
@@ -299,14 +335,12 @@ cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
     SSLCertificateFile ${SSL_DIR}/server.crt
     SSLCertificateKeyFile ${SSL_DIR}/server.key
 
-    # 主網頁目錄權限
     <Directory ${WEB_ROOT}>
         Options FollowSymLinks
         AllowOverride All
         Require all granted
     </Directory>
 
-    # 虛擬目錄：my_config 對應至 /data/my_config
     Alias /my_config ${DATA_DIR}/my_config
     <Directory ${DATA_DIR}/my_config>
         Options FollowSymLinks
@@ -319,32 +353,33 @@ cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 </VirtualHost>
 EOF
 
-cat > /etc/apache2/sites-available/redirect-ssl.conf <<EOF
+    cat > /etc/apache2/sites-available/redirect-ssl.conf <<EOF
 <VirtualHost *:80>
     ServerName localhost
     Redirect permanent / https://localhost/
 </VirtualHost>
 EOF
 
-a2ensite redirect-ssl.conf
-a2dissite 000-default.conf 2>/dev/null || true
-a2dissite default-ssl.conf 2>/dev/null || true
-a2ensite webserver-ssl.conf
+    a2ensite redirect-ssl.conf
+    a2dissite 000-default.conf 2>/dev/null || true
+    a2dissite default-ssl.conf 2>/dev/null || true
+    a2ensite webserver-ssl.conf
 
-SERVER_HOSTNAME=$(hostname)
-echo "ServerName ${SERVER_HOSTNAME}" > /etc/apache2/conf-available/servername.conf
-a2enconf servername
+    SERVER_HOSTNAME=$(hostname)
+    echo "ServerName ${SERVER_HOSTNAME}" > /etc/apache2/conf-available/servername.conf
+    a2enconf servername
+}
 
-echo "[OK] Apache VirtualHost and Aliases configured"
-echo
+run_step "STEP_10_SSL" "配置 SSL 憑證與 Apache VirtualHost" step_configure_ssl
 
 # ------------------------------------------------------------
-# 11. 部署測試頁面與自動取得 my_config.sh
+# 11. 部署測試頁面、執行並清理 my_config.sh
 # ------------------------------------------------------------
-echo "==> Creating test page and getting my_config.sh..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MY_CONFIG_FILE="${SCRIPT_DIR}/my_config.sh"
 
-# 1. 部署首頁
-cat > "${WEB_ROOT}/index.php" <<'EOF'
+step_deploy_testpage() {
+    cat > "${WEB_ROOT}/index.php" <<'EOF'
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -364,62 +399,30 @@ cat > "${WEB_ROOT}/index.php" <<'EOF'
 </html>
 EOF
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MY_CONFIG_FILE="${SCRIPT_DIR}/my_config.sh"
+    GIT_RAW_URL="https://raw.githubusercontent.com/${GIT_ACCOUNT}/${GIT_PROJECT}/main/my_config.sh"
 
-# 2. 若本地不存在 my_config.sh，則自動從 Git 儲存庫下載 (請替換為您的 Git Raw 網址)
-GIT_RAW_URL="https://raw.githubusercontent.com/${GIT_ACCOUNT}/${GIT_PROJECT}/main/my_config.sh"
+    if [ ! -f "${MY_CONFIG_FILE}" ]; then
+        echo "==> my_config.sh 未於本地找到，自 Git 下載..."
+        curl -sSL "${GIT_RAW_URL}" -o "${MY_CONFIG_FILE}" || wget -q "${GIT_RAW_URL}" -O "${MY_CONFIG_FILE}"
+    fi
 
-if [ ! -f "${MY_CONFIG_FILE}" ]; then
-    echo "==> my_config.sh not found locally, downloading from Git..."
-    curl -sSL "${GIT_RAW_URL}" -o "${MY_CONFIG_FILE}" || wget -q "${GIT_RAW_URL}" -O "${MY_CONFIG_FILE}"
-fi
+    if [ -f "${MY_CONFIG_FILE}" ]; then
+        chmod +x "${MY_CONFIG_FILE}"
+        OP_PASS="${OP_PASS}" MYSQL_ROOT_PASS="${MYSQL_ROOT_PASS}" "${MY_CONFIG_FILE}"
+        
+        # 執行完成後自動清除 my_config.sh 暫存檔
+        echo "==> 清理暫存檔 my_config.sh..."
+        rm -f "${MY_CONFIG_FILE}"
+    fi
+}
 
-# 3. 執行 my_config.sh
-if [ -f "${MY_CONFIG_FILE}" ]; then
-    chmod +x "${MY_CONFIG_FILE}"
-    OP_PASS="${OP_PASS}" MYSQL_ROOT_PASS="${MYSQL_ROOT_PASS}" "${MY_CONFIG_FILE}"
-else
-    echo "ERROR: Failed to obtain my_config.sh, skipping config page deployment."
-fi
-
-echo "[OK] Test page & external my_config script execution completed"
-echo
+run_step "STEP_11_TESTPAGE" "部署測試頁面、執行並清理 my_config.sh" step_deploy_testpage
 
 # ------------------------------------------------------------
-# 12. 設定目錄權限與重啟服務
+# 12. 設定每日 03:00 自動備份排程
 # ------------------------------------------------------------
-echo "==> Setting permissions & restarting services..."
-
-# 網頁目錄：op 擁有，www-data 群組，設定 g+s 確保未來新檔自動繼承群組
-chown -R op:www-data "${WEB_ROOT}"
-chmod -R 775 "${WEB_ROOT}"
-find "${WEB_ROOT}" -type d -exec chmod g+s {} +
-
-# 資料庫目錄：mysql 專屬
-chown -R mysql:mysql "${MYSQL_DIR}"
-chmod -R 770 "${MYSQL_DIR}"
-
-# 備份目錄：root 擁有，op 群組可讀取下載
-chown -R root:op "${DATA_DIR}/backup"
-chmod -R 775 "${DATA_DIR}/backup"
-
-# Log 目錄：www-data 寫入權限
-chown -R www-data:www-data "${DATA_DIR}/logs"
-chmod -R 775 "${DATA_DIR}/logs"
-
-apache2ctl configtest
-systemctl restart apache2
-systemctl restart mariadb
-
-echo "[OK] Services restarted successfully"
-echo
-# ------------------------------------------------------------
-# 13. 建立自動備份腳本與 Cron 排程
-# ------------------------------------------------------------
-echo "==> Setting up daily automated backup at 03:00..."
-
-cat > /usr/local/bin/backup_www.sh <<'EOF'
+step_setup_backup() {
+    cat > /usr/local/bin/backup_www.sh <<'EOF'
 #!/usr/bin/env bash
 set -e
 
@@ -428,22 +431,42 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TARGET_FILE="${BACKUP_DIR}/www_backup_${TIMESTAMP}.tar.gz"
 
 mkdir -p "${BACKUP_DIR}"
-
-# 備份 /data/www 目錄
 tar -czf "${TARGET_FILE}" -C /data www
-
-# 清除超過 7 天的歷史備份
 find "${BACKUP_DIR}" -type f -name "www_backup_*.tar.gz" -mtime +7 -delete
 EOF
 
-chmod +x /usr/local/bin/backup_www.sh
+    chmod +x /usr/local/bin/backup_www.sh
+    (crontab -l 2>/dev/null | grep -v "/usr/local/bin/backup_www.sh"; echo "0 3 * * * /usr/local/bin/backup_www.sh") | crontab -
+}
 
-# 設定 Cron 排程：每日 03:00 執行
-(crontab -l 2>/dev/null | grep -v "/usr/local/bin/backup_www.sh"; echo "0 3 * * * /usr/local/bin/backup_www.sh") | crontab -
+run_step "STEP_12_BACKUP" "設定每日 03:00 自動備份排程" step_setup_backup
 
-echo "[OK] Daily backup job set for 03:00 AM"
 # ------------------------------------------------------------
-# 14. 計算耗時並輸出終端資訊
+# 13. 設定目錄權限與重啟服務
+# ------------------------------------------------------------
+step_permissions_and_restart() {
+    chown -R op:www-data "${WEB_ROOT}"
+    chmod -R 775 "${WEB_ROOT}"
+    find "${WEB_ROOT}" -type d -exec chmod g+s {} +
+
+    chown -R mysql:mysql "${MYSQL_DIR}"
+    chmod -R 770 "${MYSQL_DIR}"
+
+    chown -R root:op "${DATA_DIR}/backup"
+    chmod -R 775 "${DATA_DIR}/backup"
+
+    chown -R www-data:www-data "${DATA_DIR}/logs"
+    chmod -R 775 "${DATA_DIR}/logs"
+
+    apache2ctl configtest
+    systemctl restart apache2
+    systemctl restart mariadb
+}
+
+run_step "STEP_13_RESTART" "設定權限並重啟相關服務" step_permissions_and_restart
+
+# ------------------------------------------------------------
+# 14. 結算與輸出
 # ------------------------------------------------------------
 END_SEC=$(date +%s)
 ELAPSED_SEC=$((END_SEC - START_SEC))

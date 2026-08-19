@@ -54,10 +54,11 @@ cat > "${CONFIG_DIR}/index.php" <<EOF
     <p><strong>密碼：</strong> <code>${OP_PASS}</code></p>
 </div>
 
-<h2>資料庫管理帳號 (MariaDB)</h2>
+<h2>資料庫管理帳號 (MariaDB / phpMyAdmin)</h2>
 <div class="credentials">
     <p><strong>帳號：</strong> <code>root</code></p>
     <p><strong>密碼：</strong> <code>${MYSQL_ROOT_PASS}</code></p>
+    <p><strong>管理介面：</strong> <a href="/phpmyadmin/" target="_blank">https://<?php echo $_SERVER['HTTP_HOST']; ?>/phpmyadmin/</a></p>
 </div>
 
 <hr>
