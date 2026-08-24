@@ -260,6 +260,11 @@ $has_mssql = extension_loaded('pdo_sqlsrv') || extension_loaded('sqlsrv');
 $samba_installed = (trim(shell_exec("which smbd 2>/dev/null")) !== '');
 $samba_running = (trim(shell_exec("systemctl is-active smbd 2>/dev/null")) === 'active');
 
+// MariaDB 與 phpMyAdmin 狀態檢測
+$mariadb_installed = (trim(shell_exec("which mariadb 2>/dev/null || which mysql 2>/dev/null")) !== '');
+$mariadb_running = (trim(shell_exec("systemctl is-active mariadb 2>/dev/null")) === 'active');
+$pma_installed = file_exists('/etc/phpmyadmin/config.inc.php');
+
 $db_vars = [];
 try {
     $mysqli = new mysqli("localhost", "root", $mysql_root_pass);
@@ -459,41 +464,58 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
         </ul>
     </div>
 
-    <!-- 7. MariaDB 資料庫狀態與參數 -->
-    <div class="card info">
-        <h2>🗄️ MariaDB 運作參數</h2>
+<!-- 7. MariaDB 資料庫狀態與參數 (支援一鍵安裝) -->
+    <div class="card <?php echo ($mariadb_installed && $mariadb_running) ? 'info' : 'danger'; ?>">
+        <h2>🗄️ MariaDB 運作狀態與參數</h2>
         <ul>
+            <li>
+                <span>服務狀態</span>
+                <?php if ($mariadb_installed && $mariadb_running): ?>
+                    <span class="badge badge-ok">運作中 (Active)</span>
+                <?php elseif ($mariadb_installed): ?>
+                    <span class="badge badge-fail">已安裝 (已停止)</span>
+                <?php else: ?>
+                    <span class="badge badge-fail">未安裝 (Missing)</span>
+                <?php endif; ?>
+            </li>
+            <li><span>資料庫路徑</span> <code class="path-code">/data/mysql</code></li>
             <li>
                 <span>max_allowed_packet</span>
                 <code><?php echo isset($db_vars['max_allowed_packet']) ? round($db_vars['max_allowed_packet'] / 1024 / 1024, 1) . ' MB' : 'N/A'; ?></code>
-            </li>
-            <li>
-                <span>innodb_buffer_pool_size</span>
-                <code><?php echo isset($db_vars['innodb_buffer_pool_size']) ? round($db_vars['innodb_buffer_pool_size'] / 1024 / 1024, 1) . ' MB' : 'N/A'; ?></code>
-            </li>
-            <li>
-                <span>wait_timeout</span>
-                <code><?php echo isset($db_vars['wait_timeout']) ? $db_vars['wait_timeout'] . 's' : 'N/A'; ?></code>
             </li>
             <li>
                 <span>max_connections</span>
                 <code><?php echo isset($db_vars['max_connections']) ? $db_vars['max_connections'] : 'N/A'; ?></code>
             </li>
         </ul>
+        <?php if (!$mariadb_installed): ?>
+            <button type="button" class="btn-install" onclick="startInstall('install_mariadb', 'MariaDB 資料庫服務安裝')">⚡ 一鍵安裝 MariaDB</button>
+        <?php endif; ?>
     </div>
 
-    <!-- 8. 集中化目錄與服務實際路徑 -->
-    <div class="card success">
-        <h2>🟢 集中化目錄實際路徑</h2>
+    <!-- 8. phpMyAdmin 管理介面 (支援一鍵安裝) -->
+    <div class="card <?php echo $pma_installed ? 'success' : 'danger'; ?>">
+        <h2>🗄️ phpMyAdmin 資料庫管理</h2>
         <ul>
-            <li><span>Ubuntu 版本</span> <span class="badge badge-ok">24.04 LTS</span></li>
-            <li><span>網頁根目錄</span> <code class="path-code">/data/www</code></li>
-            <li><span>資料庫目錄</span> <code class="path-code">/data/mysql</code></li>
-            <li><span>Apache Log Directory</span> <code class="path-code"><?php echo htmlspecialchars($apache_log_dir); ?></code></li>
-            <li><span>PHP Log Directory</span> <code class="path-code"><?php echo htmlspecialchars($php_log_dir); ?></code></li>
+            <li>
+                <span>模組狀態</span>
+                <?php if ($pma_installed): ?>
+                    <span class="badge badge-ok">已安裝 (Ready)</span>
+                <?php else: ?>
+                    <span class="badge badge-fail">未安裝 (Missing)</span>
+                <?php endif; ?>
+            </li>
+            <li><span>入口網址</span> <code class="path-code">/phpmyadmin/</code></li>
+            <li><span>Root 登入權限</span> <code>AllowRoot (TRUE)</code></li>
         </ul>
+        <?php if (!$pma_installed): ?>
+            <?php if (!$mariadb_installed): ?>
+                <button type="button" class="btn-install" style="background:#6c757d; cursor:not-allowed;" disabled>⚠️ 請先安裝 MariaDB</button>
+            <?php else: ?>
+                <button type="button" class="btn-install" onclick="startInstall('install_phpmyadmin', 'phpMyAdmin 管理介面安裝')">⚡ 一鍵安裝 phpMyAdmin</button>
+            <?php endif; ?>
+        <?php endif; ?>
     </div>
-
 </div>
 
 <!-- 安裝進度浮動視窗 (Modal) -->
