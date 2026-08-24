@@ -487,6 +487,7 @@ step_permissions_and_restart() {
     systemctl restart apache2
     systemctl restart mariadb
 }
+run_step "STEP_13_RESTART" "設定目錄權限與重啟服務" step_permissions_and_restart
 
 # ------------------------------------------------------------
 # 系統權限擴充：允許 www-data 執行一鍵安裝指令
