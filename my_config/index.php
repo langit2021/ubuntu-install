@@ -57,9 +57,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async'])) {
     header('Content-Type: application/json');
     $action = $_POST['action_async'];
     
-    @unlink('/tmp/web_install.log');
-    @unlink('/tmp/web_install.status');
-    @unlink('/tmp/run_install.sh');
+	file_put_contents('/tmp/web_install.log', '');
+	file_put_contents('/tmp/web_install.status', 'RUNNING');
+	@unlink('/tmp/run_install.sh');
+
 
     if ($action === 'install_mssql') {
         $cmd = <<<'SHELL'
@@ -346,6 +347,17 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
             .card { flex: 0 0 calc(100% - 12px); }
             .header-bar { flex-direction: column; gap: 8px; align-items: flex-start; }
         }
+		/* 新增於 <style> 區段中 */
+		@keyframes pulse-animation {
+			0% { opacity: 0.3; }
+			50% { opacity: 1; }
+			100% { opacity: 0.3; }
+		}
+		.loading-pulse {
+			animation: pulse-animation 1.5s infinite ease-in-out;
+			color: #5bc0de !important;
+			font-weight: bold;
+		}
     </style>
 </head>
 <body>
@@ -527,15 +539,28 @@ let eventSource = null;
 function startInstall(action, title) {
     if (!confirm('確定要開始執行 ' + title + ' 嗎？')) return;
 
+    // 1. 初始化 Modal 標題與紀錄面板
     document.getElementById('modalTitle').innerText = '⚙️ ' + title;
-    document.getElementById('modalLogConsole').innerText = '==> 準備開始執行程序...\n';
-    document.getElementById('modalStatusBadge').innerText = '執行中';
-    document.getElementById('modalStatusBadge').style.background = '#ffc107';
-    document.getElementById('modalStatusBadge').style.color = '#000';
-    document.getElementById('modalHint').innerText = '請勿關閉網頁，安裝執行中...';
+    document.getElementById('modalLogConsole').innerText = '==> 準備開始執行程序...\n==> 正在建立背景任務，請稍候...\n';
+    
+    // 2. 設定狀態標籤
+    const badge = document.getElementById('modalStatusBadge');
+    badge.innerText = '執行中';
+    badge.style.background = '#ffc107';
+    badge.style.color = '#000';
+
+    // 3. 設定提示文字與動態動畫
+    const hint = document.getElementById('modalHint');
+    hint.className = 'loading-pulse';
+    hint.innerText = '⏳ 系統正在背景編譯與套件安裝中，請勿關閉網頁...';
+
+    // 4. 隱藏關閉按鈕
     document.getElementById('btnCloseModal').style.display = 'none';
+
+    // 5. 顯示 Modal 視窗
     document.getElementById('installModal').classList.add('active');
 
+    // 6. 發送非同步請求觸發背景安裝
     const formData = new FormData();
     formData.append('action_async', action);
 
@@ -545,6 +570,12 @@ function startInstall(action, title) {
             if (data.status === 'started') {
                 listenToStream();
             }
+        })
+        .catch(err => {
+            document.getElementById('modalLogConsole').innerText += '\n❌ 觸發背景任務失敗，請重新整理頁面再試。';
+            hint.className = '';
+            hint.innerText = '發生錯誤，請重試。';
+            document.getElementById('btnCloseModal').style.display = 'block';
         });
 }
 
