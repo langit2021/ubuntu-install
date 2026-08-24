@@ -222,7 +222,7 @@ step_setup_op_user() {
     usermod -aG www-data op
 
     chown root:www-data /data
-    chmod 775 /data
+    chmod 755 /data
 
     rm -f /etc/ssh/sshd_config.d/sftp-op.conf
     cat > /etc/ssh/sshd_config.d/sftp-op.conf <<EOF
