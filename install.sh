@@ -132,9 +132,18 @@ step_create_dirs() {
 run_step "STEP_03_DIRS" "建立 /data 集中化目錄結構" step_create_dirs
 
 # ------------------------------------------------------------
-# 4. 更新套件源與安裝基礎工具 (含 Cron)
+# 4. 更新套件源與安裝基礎工具
 # ------------------------------------------------------------
 step_install_base() {
+    echo "==> 檢查並等待系統背景更新 (unattended-upgr) 結束..."
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        echo "系統背景正在更新中，等待 5 秒..."
+        sleep 5
+    done
+
+    # 暫時停止自動更新服務，避免安裝中途再次搶鎖
+    systemctl stop unattended-upgrades 2>/dev/null || true
+
     sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
     apt-get update
     apt-get install -y \
@@ -374,11 +383,8 @@ EOF
 run_step "STEP_10_SSL" "配置 SSL 憑證與 Apache VirtualHost" step_configure_ssl
 
 # ------------------------------------------------------------
-# 11. 部署測試頁面、執行並清理 my_config.sh
+# 11. 部署測試頁面與 /my_config 控制台頁面
 # ------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MY_CONFIG_FILE="${SCRIPT_DIR}/my_config.sh"
-
 step_deploy_testpage() {
     cat > "${WEB_ROOT}/index.php" <<'EOF'
 <!DOCTYPE html>
@@ -400,24 +406,23 @@ step_deploy_testpage() {
 </html>
 EOF
 
-    GIT_RAW_URL="https://raw.githubusercontent.com/${GIT_ACCOUNT}/${GIT_PROJECT}/main/my_config.sh"
+    # 下載獨立的 my_config index.php 頁面
+    CONFIG_DEST_DIR="${DATA_DIR}/my_config"
+    mkdir -p "${CONFIG_DEST_DIR}"
 
-    if [ ! -f "${MY_CONFIG_FILE}" ]; then
-        echo "==> my_config.sh 未於本地找到，自 Git 下載..."
-        curl -sSL "${GIT_RAW_URL}" -o "${MY_CONFIG_FILE}" || wget -q "${GIT_RAW_URL}" -O "${MY_CONFIG_FILE}"
+    GIT_CONFIG_URL="https://raw.githubusercontent.com/${GIT_ACCOUNT}/${GIT_PROJECT}/main/my_config/index.php"
+
+    echo "==> 自 Git 下載控制台頁面 (index.php)..."
+    if ! curl -sSL "${GIT_CONFIG_URL}" -o "${CONFIG_DEST_DIR}/index.php"; then
+        wget -q "${GIT_CONFIG_URL}" -O "${CONFIG_DEST_DIR}/index.php"
     fi
 
-    if [ -f "${MY_CONFIG_FILE}" ]; then
-        chmod +x "${MY_CONFIG_FILE}"
-        OP_PASS="${OP_PASS}" MYSQL_ROOT_PASS="${MYSQL_ROOT_PASS}" "${MY_CONFIG_FILE}"
-        
-        # 執行完成後自動清除 my_config.sh 暫存檔
-        echo "==> 清理暫存檔 my_config.sh..."
-        rm -f "${MY_CONFIG_FILE}"
-    fi
+    # 設定權限
+    chown -R www-data:www-data "${CONFIG_DEST_DIR}"
+    chmod -R 755 "${CONFIG_DEST_DIR}"
 }
 
-run_step "STEP_11_TESTPAGE" "部署測試頁面、執行並清理 my_config.sh" step_deploy_testpage
+run_step "STEP_11_TESTPAGE" "部署測試頁面與 /my_config 控制台頁面" step_deploy_testpage
 
 # ------------------------------------------------------------
 # 12. 設定每日 03:00 自動備份排程
