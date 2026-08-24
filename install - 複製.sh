@@ -2,63 +2,19 @@
 
 # ============================================================
 # Ubuntu Web Server Installer
-# Version: 0.5
+# Version: 0.4
 # Target: Ubuntu Server 24.04 LTS
 # ============================================================
 
 set -e
+# 重置腳本運行計時器
 SECONDS=0
-
-# ------------------------------------------------------------
-# 1. 時間同步與日誌準備 (優先校正時間以確保 Log 檔名正確)
-# ------------------------------------------------------------
-step_timezone_and_log() {
-    echo "=== 設定系統時區為 Asia/Taipei ==="
-    timedatectl set-timezone Asia/Taipei || true
-    echo "=== 透過 HTTP 標頭強制同步時間 ==="
-    HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | tr -d '\r' | cut -d' ' -f2-)
-    if [ -n "$HTTP_DATE" ]; then
-        date -u -s "$HTTP_DATE"
-        timedatectl set-local-rtc 0 2>/dev/null || true
-        echo "時間同步成功！當前系統時間: $(date)"
-    fi
-}
-
-step_timezone_and_log
-
-GIT_ACCOUNT=langit2021
-GIT_PROJECT=ubuntu-install
-
-START_TIME=$(date '+%Y%m%d_%H%M')
-START_SEC=$(date +%s)
-LOG_FILE="$(pwd)/install_${START_TIME}.log"
-
-exec > >(tee -a "$LOG_FILE") 2>&1
-echo "=============================================="
-echo " Installation Log"
-echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
-echo " Log: ${LOG_FILE}"
-echo "=============================================="
-echo
-
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-
-VERSION="0.5"
-DATA_DIR="/data"
-WEB_ROOT="${DATA_DIR}/www"
-MYSQL_DIR="${DATA_DIR}/mysql"
-LOG_APACHE="${DATA_DIR}/logs/apache"
-LOG_PHP="${DATA_DIR}/logs/php"
-CONFIG_DIR="${WEB_ROOT}/my_config"
-SSL_DIR="/etc/apache2/ssl"
-PROGRESS_FILE="/data/.install_progress"
-
-mkdir -p /data
-
 # ------------------------------------------------------------
 # Checkpoint / 章節狀態檢查機制
 # ------------------------------------------------------------
+PROGRESS_FILE="/data/.install_progress"
+mkdir -p /data
+
 is_step_completed() {
     local step_name="$1"
     if [ -f "$PROGRESS_FILE" ] && grep -q "^${step_name}$" "$PROGRESS_FILE"; then
@@ -91,6 +47,50 @@ run_step() {
     echo "[OK] 章節 [${step_id}] 執行完成！"
     echo
 }
+
+# ------------------------------------------------------------
+# 1. 時間同步與日誌準備
+# ------------------------------------------------------------
+step_timezone_and_log() {
+    echo "=== 設定系統時區為 Asia/Taipei ==="
+    timedatectl set-timezone Asia/Taipei || true
+    echo "=== 透過 HTTP 標頭強制同步時間 ==="
+    HTTP_DATE=$(curl -sI https://google.com | grep -i '^date:' | tr -d '\r' | cut -d' ' -f2-)
+    if [ -n "$HTTP_DATE" ]; then
+        date -u -s "$HTTP_DATE"
+        timedatectl set-local-rtc 0 2>/dev/null || true
+        echo "時間同步成功！當前系統時間: $(date)"
+    fi
+}
+
+GIT_ACCOUNT=langit2021
+GIT_PROJECT=ubuntu-install
+
+START_TIME=$(date '+%Y%m%d_%H%M')
+START_SEC=$(date +%s)
+LOG_FILE="$(pwd)/install_${START_TIME}.log"
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "=============================================="
+echo " Installation Log"
+echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
+echo " Log: ${LOG_FILE}"
+echo "=============================================="
+echo
+
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+VERSION="0.4"
+DATA_DIR="/data"
+WEB_ROOT="${DATA_DIR}/www"
+MYSQL_DIR="${DATA_DIR}/mysql"
+LOG_APACHE="${DATA_DIR}/logs/apache"
+LOG_PHP="${DATA_DIR}/logs/php"
+CONFIG_DIR="${WEB_ROOT}/my_config"
+SSL_DIR="/etc/apache2/ssl"
+
+run_step "STEP_01_TIME" "時間同步與日誌初始化" step_timezone_and_log
 
 # ------------------------------------------------------------
 # 2. 系統環境檢查
@@ -141,6 +141,7 @@ step_install_base() {
         sleep 5
     done
 
+    # 暫時停止自動更新服務，避免安裝中途再次搶鎖
     systemctl stop unattended-upgrades 2>/dev/null || true
 
     sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
@@ -197,10 +198,12 @@ step_install_php() {
 
     a2enmod php8.3
 
+    # 配置 PHP Log 存放於 /data/logs/php/
     sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/apache2/php.ini
     sed -i "s|;error_log = php_errors.log|error_log = ${LOG_PHP}/php_errors.log|g" /etc/php/8.3/cli/php.ini
     touch "${LOG_PHP}/php_errors.log"
 
+    # 配置 PHP 時區為 Asia/Taipei
     sed -i "s|;date.timezone =|date.timezone = Asia/Taipei|g" /etc/php/8.3/apache2/php.ini
     sed -i "s|;date.timezone =|date.timezone = Asia/Taipei|g" /etc/php/8.3/cli/php.ini
 
@@ -213,21 +216,25 @@ run_step "STEP_06_PHP" "安裝與設定 PHP 8.3" step_install_php
 # 7. 建立維護帳號 (op) 與 SFTP / Samba 權限設定
 # ------------------------------------------------------------
 step_setup_op_user() {
+    # 確保 OP_PASS 有預設值
     OP_PASS="${OP_PASS:-KXP1AEEuAsaqDWn}"
 
+    # 建立 op 帳號
     if ! id "op" &>/dev/null; then
         useradd -d /data -s /bin/bash op
     else
         usermod -s /bin/bash op
     fi
 
+    # 設定密碼並加入 www-data 群組
     echo "op:${OP_PASS}" | chpasswd
     usermod -aG www-data op
 
+    # 設定 /data 權限，同時相容 Chroot SFTP 與 Samba 讀寫
     chown root:www-data /data
     chmod 775 /data
 
-    rm -f /etc/ssh/sshd_config.d/sftp-op.conf
+    # 設定 SSH SFTP
     cat > /etc/ssh/sshd_config.d/sftp-op.conf <<EOF
 Match User op
     ChrootDirectory /data
@@ -248,6 +255,7 @@ step_install_mariadb() {
     echo "==> 強制停止舊有 MariaDB 服務並徹底清空既有資料檔..."
     systemctl stop mariadb 2>/dev/null || true
 
+    # 強制清空預設與目標 MySQL 資料目錄，確保重複執行時能從零初始
     rm -rf /var/lib/mysql/*
     rm -rf "${MYSQL_DIR}"/*
 
@@ -269,6 +277,7 @@ run_step "STEP_08_MARIADB" "清空資料、安裝 MariaDB 並移轉至 /data/mys
 # 9. 安裝 phpMyAdmin 與安全性設定
 # ------------------------------------------------------------
 step_install_phpmyadmin() {
+    # 預設密碼備援，防止變數為空
     MYSQL_ROOT_PASS="${MYSQL_ROOT_PASS:-KXP1AEEuAsaqDWn}"
     PMA_PASS="${PMA_PASS:-KXP1AEEuAsaqDWn}"
 
@@ -285,6 +294,7 @@ step_install_phpmyadmin() {
         fi
     fi
 
+    # 重設 MariaDB root 與 phpmyadmin 控制帳號
     mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 DELETE FROM mysql.user WHERE User='';
@@ -299,11 +309,11 @@ GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
+    # 加上 --batch 避免密碼錯誤時進入互動模式卡住
     if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
         mysql --batch -u root -p"${MYSQL_ROOT_PASS}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
     fi
 
-    rm -f /etc/phpmyadmin/config-db.php
     cat > /etc/phpmyadmin/config-db.php <<EOF
 <?php
 \$dbuser='phpmyadmin';
@@ -326,8 +336,6 @@ run_step "STEP_09_PHPMYADMIN" "安裝與配置 phpMyAdmin" step_install_phpmyadm
 # ------------------------------------------------------------
 step_configure_ssl() {
     a2enmod ssl rewrite headers
-    
-    rm -rf "${SSL_DIR}"
     mkdir -p "${SSL_DIR}"
 
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
@@ -337,9 +345,6 @@ step_configure_ssl() {
 
     chmod 600 "${SSL_DIR}/server.key"
     chmod 644 "${SSL_DIR}/server.crt"
-
-    a2dissite webserver-ssl.conf redirect-ssl.conf 2>/dev/null || true
-    rm -f /etc/apache2/sites-available/webserver-ssl.conf /etc/apache2/sites-available/redirect-ssl.conf
 
     cat > /etc/apache2/sites-available/webserver-ssl.conf <<EOF
 <VirtualHost *:443>
@@ -388,7 +393,6 @@ EOF
 }
 
 run_step "STEP_10_SSL" "配置 SSL 憑證與 Apache VirtualHost" step_configure_ssl
-
 # ------------------------------------------------------------
 # 11. 部署測試頁面與 /my_config 控制台頁面
 # ------------------------------------------------------------
@@ -419,6 +423,7 @@ EOF
     GIT_CONFIG_URL="https://raw.githubusercontent.com/${GIT_ACCOUNT}/${GIT_PROJECT}/main/my_config/index.php"
 
     echo "==> 自 Git 下載控制台頁面 (index.php)..."
+    # 使用 -f 參數確保 HTTP 錯誤 (404) 時不寫入檔案
     if ! curl -sSLf "${GIT_CONFIG_URL}" -o "${CONFIG_DEST_DIR}/index.php"; then
         echo "⚠️ 警告: 自 Git 下載 index.php 失敗 (404 或網路錯誤)，寫入基礎預設頁面..."
         cat > "${CONFIG_DEST_DIR}/index.php" <<'PHP_EOF'
@@ -428,12 +433,12 @@ echo "<p>請確保 GitHub 儲存庫已放置 my_config/index.php 檔案。</p>";
 PHP_EOF
     fi
 
+    # 設定目錄與檔案權限
     chown -R www-data:www-data "${CONFIG_DEST_DIR}"
     chmod -R 755 "${CONFIG_DEST_DIR}"
 }
 
 run_step "STEP_11_TESTPAGE" "部署測試頁面與 /my_config 控制台頁面" step_deploy_testpage
-
 # ------------------------------------------------------------
 # 12. 設定每日 03:00 自動備份排程
 # ------------------------------------------------------------
@@ -454,6 +459,7 @@ EOF
     chmod +x /usr/local/bin/backup_www.sh
     (crontab -l 2>/dev/null | grep -v "/usr/local/bin/backup_www.sh"; echo "0 3 * * * /usr/local/bin/backup_www.sh") | crontab -
     
+    # 建立可供網頁讀取的 Crontab 狀態標記檔
     crontab -l > /data/.cron_status
     chmod 644 /data/.cron_status
 }
@@ -481,11 +487,10 @@ step_permissions_and_restart() {
     systemctl restart apache2
     systemctl restart mariadb
 }
-
 run_step "STEP_13_RESTART" "設定目錄權限與重啟服務" step_permissions_and_restart
 
 # ------------------------------------------------------------
-# 14. 系統權限擴充：允許 www-data 執行一鍵安裝指令
+# 系統權限擴充：允許 www-data 執行一鍵安裝指令
 # ------------------------------------------------------------
 step_setup_web_sudoers() {
     cat > /etc/sudoers.d/www-data-install <<'EOF'
@@ -501,10 +506,10 @@ EOF
 }
 
 run_step "STEP_WEB_SUDO" "設定 www-data 免密碼 Sudo 權限" step_setup_web_sudoers
-
 # ------------------------------------------------------------
-# 15. 結算與輸出
+# 14. 結算與輸出
 # ------------------------------------------------------------
+# 直接採用 SECONDS 變數，不受時間同步校正影響
 ELAPSED_SEC=$SECONDS
 MINUTES=$((ELAPSED_SEC / 60))
 SECONDS_LEFT=$((ELAPSED_SEC % 60))
@@ -523,9 +528,9 @@ echo "phpMyAdmin:        https://${SERVER_IP}/phpmyadmin/"
 echo 
 echo "系統維護帳號 (SSH / SFTP):"
 echo "  帳號: op"
-echo "  密碼: ${OP_PASS:-KXP1AEEuAsaqDWn}"
+echo "  密碼: ${OP_PASS}"
 echo
 echo "MariaDB Root 憑證:"
 echo "  帳號: root"
-echo "  密碼: ${MYSQL_ROOT_PASS:-KXP1AEEuAsaqDWn}"
+echo "  密碼: ${MYSQL_ROOT_PASS}"
 echo "=============================================="

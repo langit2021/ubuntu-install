@@ -2,106 +2,67 @@
 // ============================================================
 // Ubuntu Web Server - Config Page
 // File: my_config/index.php
-// Description: Interactive Control Panel with MS SQL & Samba Setup (with SSE Log Streaming Modal)
+// Description: Interactive Control Panel with MS SQL & Samba Setup
 // ============================================================
 
-// ------------------------------------------------------------
-// 1. SSE 即時安裝進度串流處理器
-// ------------------------------------------------------------
-if (isset($_GET['api']) && $_GET['api'] === 'stream_log') {
-    header('Content-Type: text/event-stream');
-    header('Cache-Control: no-cache');
-    header('Connection: keep-alive');
+$op_pass = getenv('OP_PASS') ?: 'KXP1AEEuAsaqDWn';
+$mysql_root_pass = getenv('MYSQL_ROOT_PASS') ?: 'KXP1AEEuAsaqDWn';
 
-    $log_file = '/tmp/web_install.log';
-    $status_file = '/tmp/web_install.status';
-
-    $last_pos = 0;
-    while (true) {
-        if (file_exists($log_file)) {
-            clearstatcache(true, $log_file);
-            $current_len = filesize($log_file);
-            if ($current_len > $last_pos) {
-                $f = fopen($log_file, 'rb');
-                fseek($f, $last_pos);
-                while (!feof($f)) {
-                    $line = fgets($f);
-                    if ($line !== false) {
-                        echo "data: " . json_encode(['line' => $line]) . "\n\n";
-                        ob_flush();
-                        flush();
-                    }
-                }
-                $last_pos = ftell($f);
-                fclose($f);
-            }
-        }
-
-        if (file_exists($status_file)) {
-            $status = trim(file_get_contents($status_file));
-            echo "data: " . json_encode(['status' => $status]) . "\n\n";
-            ob_flush();
-            flush();
-            break;
-        }
-
-        usleep(300000); // 0.3 秒輪詢
-    }
-    exit;
-}
+$message = '';
+$message_type = 'success';
 
 // ------------------------------------------------------------
-// 2. 非同步背景安裝觸發器
+// POST 動作處理器
 // ------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async'])) {
-    header('Content-Type: application/json');
-    $action = $_POST['action_async'];
-    
-    @unlink('/tmp/web_install.log');
-    @unlink('/tmp/web_install.status');
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    $action = $_POST['action'];
 
     if ($action === 'install_mssql') {
-        $cmd = <<<'SHELL'
-(
+        // Ubuntu 24.04 微軟官方 ODBC 18 & PECL sqlsrv / pdo_sqlsrv 自動編譯安裝
+        $install_script = <<<'SHELL'
+#!/usr/bin/env bash
 set -e
 export DEBIAN_FRONTEND=noninteractive
-echo "==> 開始設定 Microsoft 套件源..."
+
+# 1. 匯入 Microsoft 官方 Key 與 Ubuntu 24.04 套件庫
 if [ ! -f /etc/apt/sources.list.d/mssql-release.list ]; then
     curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg --yes
     curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
 fi
 
-echo "==> 更新套件並安裝編譯依賴 (unixodbc-dev / php-dev)..."
 sudo apt-get update
 sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev php-dev php-pear build-essential
 
-echo "==> 透過 PECL 編譯 sqlsrv / pdo_sqlsrv..."
+# 2. 透過 PECL 編譯安裝擴充套件
 sudo pecl install sqlsrv pdo_sqlsrv || true
 
-echo "==> 啟用 PHP 模組並重啟 Apache..."
+# 3. 寫入 PHP 模組設定並啟用
 echo "extension=sqlsrv.so" | sudo tee /etc/php/8.3/mods-available/sqlsrv.ini
 echo "extension=pdo_sqlsrv.so" | sudo tee /etc/php/8.3/mods-available/pdo_sqlsrv.ini
+
 sudo phpenmod sqlsrv pdo_sqlsrv
 sudo systemctl restart apache2
-echo "==> MS SQL 驅動安裝完成！"
-) > /tmp/web_install.log 2>&1
-if [ $? -eq 0 ]; then
-    echo "SUCCESS" > /tmp/web_install.status
-else
-    echo "FAILED" > /tmp/web_install.status
-fi
 SHELL;
-    } elseif ($action === 'install_samba') {
-        $op_pass = getenv('OP_PASS') ?: 'KXP1AEEuAsaqDWn';
-        $cmd = <<<SHELL
-(
-set -e
-echo "==> 開始安裝 Samba 套件..."
-sudo apt-get update && sudo apt-get install -y samba
 
-echo "==> 配置 /etc/samba/smb.conf ..."
-if ! grep -q '\[web\]' /etc/samba/smb.conf; then
-    sudo bash -c 'cat >> /etc/samba/smb.conf' <<CONF
+        file_put_contents('/tmp/install_mssql.sh', $install_script);
+        chmod('/tmp/install_mssql.sh', 0755);
+        
+        exec("sudo /tmp/install_mssql.sh 2>&1", $output, $return_var);
+        @unlink('/tmp/install_mssql.sh');
+
+        if ($return_var === 0) {
+            $message = "MS SQL (2017+) 驅動程式編譯與安裝成功！Apache 已完成重啟。";
+        } else {
+            $message = "安裝失敗，詳細錯誤訊息: " . implode("<br>", array_slice($output, -6));
+            $message_type = "danger";
+        }
+
+    } elseif ($action === 'install_samba') {
+        // 1. 安裝 Samba
+        shell_exec("sudo apt-get update && sudo apt-get install -y samba 2>&1");
+
+        // 2. 寫入 smb.conf 設定 (分享 /data 全部目錄為 web)
+        $smb_conf = <<<CONF
 
 [web]
    comment = Data Central Directory
@@ -116,41 +77,33 @@ if ! grep -q '\[web\]' /etc/samba/smb.conf; then
    directory mask = 0775
    follow symlinks = yes
    wide links = yes
-CONF
-fi
+CONF;
 
-echo "==> 設定 op 帳號與 Samba 密碼..."
-printf "${op_pass}\n${op_pass}\n" | sudo smbpasswd -a -s op
-sudo smbpasswd -e op
-sudo systemctl restart smbd
-echo "==> Samba 網路芳鄰建置完成！"
-) > /tmp/web_install.log 2>&1
-if [ $? -eq 0 ]; then
-    echo "SUCCESS" > /tmp/web_install.status
-else
-    echo "FAILED" > /tmp/web_install.status
-fi
-SHELL;
+        $current_conf = @file_get_contents('/etc/samba/smb.conf') ?: '';
+        if (strpos($current_conf, '[web]') === false) {
+            file_put_contents('/tmp/smb_append.conf', $smb_conf);
+            shell_exec("sudo bash -c 'cat /tmp/smb_append.conf >> /etc/samba/smb.conf' && rm -f /tmp/smb_append.conf");
+        }
+
+        // 3. 設定 Samba op 帳號與密碼
+        $cmd_pass = "printf \"{$op_pass}\n{$op_pass}\n\" | sudo smbpasswd -a -s op && sudo smbpasswd -e op && sudo systemctl restart smbd";
+        shell_exec($cmd_pass);
+
+        $message = "Samba 網路芳鄰已成功建立！請使用帳號 op 與密碼連線至 \\\\IP\\web。";
     }
-
-    file_put_contents('/tmp/run_install.sh', $cmd);
-    chmod('/tmp/run_install.sh', 0755);
-    exec("nohup /tmp/run_install.sh > /dev/null 2>&1 &");
-
-    echo json_encode(['status' => 'started']);
-    exit;
 }
-
-$op_pass = getenv('OP_PASS') ?: 'KXP1AEEuAsaqDWn';
-$mysql_root_pass = getenv('MYSQL_ROOT_PASS') ?: 'KXP1AEEuAsaqDWn';
 
 // ------------------------------------------------------------
 // 狀態檢測 Logic
 // ------------------------------------------------------------
+// 1. 檢測 MSSQL (pdo_sqlsrv / sqlsrv) 驅動
 $has_mssql = extension_loaded('pdo_sqlsrv') || extension_loaded('sqlsrv');
+
+// 2. 檢測 Samba 服務
 $samba_installed = (trim(shell_exec("which smbd 2>/dev/null")) !== '');
 $samba_running = (trim(shell_exec("systemctl is-active smbd 2>/dev/null")) === 'active');
 
+// 3. MariaDB 變數
 $db_vars = [];
 try {
     $mysqli = new mysqli("localhost", "root", $mysql_root_pass);
@@ -163,10 +116,12 @@ try {
     }
 } catch (Exception $e) {}
 
+// 4. Cron 狀態
 $cron_status_file = '/data/.cron_status';
 $cron_content = file_exists($cron_status_file) ? file_get_contents($cron_status_file) : '';
 $has_backup_cron = (strpos($cron_content, '/usr/local/bin/backup_www.sh') !== false);
 
+// 5. Apache & PHP 參數
 $apache_timeout = trim(shell_exec("apache2ctl -t -D DUMP_RUN_CFG 2>/dev/null | grep -i Timeout || grep -Ri '^Timeout' /etc/apache2/ 2>/dev/null | head -n1 | awk '{print $2}'") ?: '300 (Default)');
 $apache_limit_req = trim(shell_exec("grep -Ri '^LimitRequestBody' /etc/apache2/ 2>/dev/null | head -n1 | awk '{print $2}'") ?: '0 (Unlimited)');
 if (is_numeric($apache_limit_req) && $apache_limit_req > 0) {
@@ -192,6 +147,10 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
         .nav-bar a { display: inline-block; padding: 6px 12px; margin-left: 6px; border-radius: 4px; text-decoration: none; font-weight: bold; color: #fff; font-size: 0.85rem; }
         .btn-home { background-color: #28a745; }
         .btn-pma { background-color: #17a2b8; }
+        
+        .alert { padding: 10px 15px; margin-bottom: 12px; border-radius: 4px; font-weight: bold; font-size: 0.9rem; }
+        .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-danger { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
 
         .card-grid { display: flex; flex-wrap: wrap; margin: -6px; }
         .card { flex: 0 0 calc(25% - 12px); margin: 6px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); padding: 12px; border-top: 3px solid #007bff; }
@@ -216,17 +175,6 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
         .btn-install { background: #007bff; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.8rem; width: 100%; margin-top: 6px; transition: background 0.2s; }
         .btn-install:hover { background: #0056b3; }
 
-        /* Modal 浮動視窗樣式 */
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6); z-index: 9999; justify-content: center; align-items: center; }
-        .modal-overlay.active { display: flex; }
-        .modal-box { background: #1e1e1e; color: #f1f1f1; width: 90%; max-width: 800px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); overflow: hidden; display: flex; flex-direction: column; max-height: 85vh; }
-        .modal-header { background: #2d2d2d; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #444; }
-        .modal-header h3 { margin: 0; font-size: 1.1rem; color: #61dafb; }
-        .modal-body { padding: 16px; overflow-y: auto; flex: 1; font-family: "Courier New", Courier, monospace; font-size: 0.88rem; background: #000; color: #00ff00; white-space: pre-wrap; word-break: break-all; }
-        .modal-footer { background: #2d2d2d; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #444; }
-        .btn-close-modal { background: #28a745; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; display: none; }
-        .btn-close-modal:hover { background: #218838; }
-
         @media (max-width: 1200px) { .card { flex: 0 0 calc(33.333% - 12px); } }
         @media (max-width: 768px) { .card { flex: 0 0 calc(50% - 12px); } }
         @media (max-width: 500px) { 
@@ -244,6 +192,10 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
         <a href="/phpmyadmin/" target="_blank" class="btn-pma">🗄️ phpMyAdmin</a>
     </div>
 </div>
+
+<?php if ($message): ?>
+    <div class="alert alert-<?php echo $message_type; ?>"><?php echo $message; ?></div>
+<?php endif; ?>
 
 <div class="card-grid">
 
@@ -273,7 +225,10 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
             <li><span>支援版本</span> <code>SQL Server 2017+</code></li>
         </ul>
         <?php if (!$has_mssql): ?>
-            <button type="button" class="btn-install" onclick="startInstall('install_mssql', 'MS SQL (2017+) 驅動安裝')">⚡ 一鍵安裝 MS SQL 驅動</button>
+            <form method="POST" onsubmit="return confirm('安裝約需 1-2 分鐘進行套件編譯，確定要開始嗎？');">
+                <input type="hidden" name="action" value="install_mssql">
+                <button type="submit" class="btn-install">⚡ 一鍵安裝 MS SQL 驅動</button>
+            </form>
         <?php endif; ?>
     </div>
 
@@ -296,7 +251,10 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
             <li><span>連線位置</span> <code class="path-code">\\<?php echo htmlspecialchars($server_ip); ?>\web</code></li>
         </ul>
         <?php if (!$samba_installed): ?>
-            <button type="button" class="btn-install" onclick="startInstall('install_samba', 'Samba 網路芳鄰設定')">⚡ 一鍵安裝 Samba 分享</button>
+            <form method="POST" onsubmit="return confirm('確定要安裝 Samba 並啟用 \\\\IP\\web 網路芳鄰分享嗎？');">
+                <input type="hidden" name="action" value="install_samba">
+                <button type="submit" class="btn-install">⚡ 一鍵安裝 Samba 分享</button>
+            </form>
         <?php endif; ?>
     </div>
 
@@ -375,90 +333,6 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
     </div>
 
 </div>
-
-<!-- 安裝進度浮動視窗 (Modal) -->
-<div id="installModal" class="modal-overlay">
-    <div class="modal-box">
-        <div class="modal-header">
-            <h3 id="modalTitle">⚙️ 套件安裝中...</h3>
-            <span id="modalStatusBadge" class="badge" style="background:#ffc107; color:#000;">執行中</span>
-        </div>
-        <div class="modal-body" id="modalLogConsole">正在初始化安裝程序...\n</div>
-        <div class="modal-footer">
-            <span id="modalHint" style="font-size:0.85rem; color:#aaa;">請勿關閉網頁，安裝執行中...</span>
-            <button id="btnCloseModal" type="button" class="btn-close-modal" onclick="closeModalAndReload()">關閉視窗並重新整理</button>
-        </div>
-    </div>
-</div>
-
-<script>
-let eventSource = null;
-
-function startInstall(action, title) {
-    if (!confirm('確定要開始執行 ' + title + ' 嗎？')) return;
-
-    document.getElementById('modalTitle').innerText = '⚙️ ' + title;
-    document.getElementById('modalLogConsole').innerText = '==> 準備開始執行程序...\n';
-    document.getElementById('modalStatusBadge').innerText = '執行中';
-    document.getElementById('modalStatusBadge').style.background = '#ffc107';
-    document.getElementById('modalStatusBadge').style.color = '#000';
-    document.getElementById('modalHint').innerText = '請勿關閉網頁，安裝執行中...';
-    document.getElementById('btnCloseModal').style.display = 'none';
-    document.getElementById('installModal').classList.add('active');
-
-    const formData = new FormData();
-    formData.append('action_async', action);
-
-    fetch('index.php', { method: 'POST', body: formData })
-        .then(res => res.json())
-        .then(data => {
-            if (data.status === 'started') {
-                listenToStream();
-            }
-        });
-}
-
-function listenToStream() {
-    if (eventSource) eventSource.close();
-
-    eventSource = new EventSource('index.php?api=stream_log');
-    const logConsole = document.getElementById('modalLogConsole');
-
-    eventSource.onmessage = function(e) {
-        const data = JSON.parse(e.data);
-        
-        if (data.line) {
-            logConsole.innerText += data.line;
-            logConsole.scrollTop = logConsole.scrollHeight;
-        }
-
-        if (data.status) {
-            eventSource.close();
-            const badge = document.getElementById('modalStatusBadge');
-            const hint = document.getElementById('modalHint');
-            const closeBtn = document.getElementById('btnCloseModal');
-
-            if (data.status === 'SUCCESS') {
-                badge.innerText = '完成';
-                badge.style.background = '#28a745';
-                badge.style.color = '#fff';
-                hint.innerText = '安裝已成功完成！請點擊右側按鈕關閉視窗。';
-            } else {
-                badge.innerText = '失敗';
-                badge.style.background = '#dc3545';
-                badge.style.color = '#fff';
-                hint.innerText = '安裝過程中發生錯誤，請檢查 Log 訊息。';
-            }
-            closeBtn.style.display = 'block';
-        }
-    };
-}
-
-function closeModalAndReload() {
-    document.getElementById('installModal').classList.remove('active');
-    window.location.reload();
-}
-</script>
 
 </body>
 </html>
