@@ -57,10 +57,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async'])) {
     header('Content-Type: application/json');
     $action = $_POST['action_async'];
     
-	file_put_contents('/tmp/web_install.log', '');
-	file_put_contents('/tmp/web_install.status', 'RUNNING');
-	@unlink('/tmp/run_install.sh');
-
+    @unlink('/tmp/web_install.log');
+    @unlink('/tmp/web_install.status');
+    @unlink('/tmp/run_install.sh');
 
     if ($action === 'install_mssql') {
         $cmd = <<<'SHELL'
