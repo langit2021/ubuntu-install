@@ -216,9 +216,17 @@ run_step "STEP_06_PHP" "安裝與設定 PHP 8.3" step_install_php
 # 7. 建立維護帳號 (op) 與 SFTP / Samba 權限設定
 # ------------------------------------------------------------
 step_setup_op_user() {
+    # 確保 OP_PASS 有預設值
+    OP_PASS="${OP_PASS:-KXP1AEEuAsaqDWn}"
+
+    # 建立 op 帳號
     if ! id "op" &>/dev/null; then
         useradd -d /data -s /bin/bash op
+    else
+        usermod -s /bin/bash op
     fi
+
+    # 設定密碼並加入 www-data 群組
     echo "op:${OP_PASS}" | chpasswd
     usermod -aG www-data op
 
@@ -226,6 +234,7 @@ step_setup_op_user() {
     chown root:www-data /data
     chmod 775 /data
 
+    # 設定 SSH SFTP
     cat > /etc/ssh/sshd_config.d/sftp-op.conf <<EOF
 Match User op
     ChrootDirectory /data
