@@ -213,22 +213,18 @@ step_install_php() {
 run_step "STEP_06_PHP" "安裝與設定 PHP 8.3" step_install_php
 
 # ------------------------------------------------------------
-# 7. 建立維護帳號 (op) 與 SFTP Chroot 限制
+# 7. 建立維護帳號 (op) 與 SFTP / Samba 權限設定
 # ------------------------------------------------------------
-OP_PASS="KXP1AEEuAsaqDWn"
-MYSQL_ROOT_PASS="KXP1AEEuAsaqDWn"
-PMA_PASS="KXP1AEEuAsaqDWn"
-
 step_setup_op_user() {
     if ! id "op" &>/dev/null; then
-        useradd -d /data/www -s /bin/bash op
+        useradd -d /data -s /bin/bash op
     fi
     echo "op:${OP_PASS}" | chpasswd
     usermod -aG www-data op
 
-    # SFTP Chroot 目錄權限要求
-    chown root:root /data
-    chmod 755 /data
+    # 設定 /data 權限，同時相容 Chroot SFTP 與 Samba 讀寫
+    chown root:www-data /data
+    chmod 775 /data
 
     cat > /etc/ssh/sshd_config.d/sftp-op.conf <<EOF
 Match User op
@@ -241,7 +237,7 @@ EOF
     systemctl restart ssh || systemctl restart sshd
 }
 
-run_step "STEP_07_OP_USER" "建立維護帳號 (op) 並配置 SFTP Chroot" step_setup_op_user
+run_step "STEP_07_OP_USER" "建立維護帳號 (op) 並配置權限" step_setup_op_user
 
 # ------------------------------------------------------------
 # 8. 重置與安裝 MariaDB，移轉資料目錄至 /data/mysql
@@ -477,17 +473,18 @@ step_permissions_and_restart() {
     systemctl restart mariadb
 }
 
-run_step "STEP_13_RESTART" "設定權限並重啟相關服務" step_permissions_and_restart
 # ------------------------------------------------------------
-# 系統權限擴充：允許 www-data 執行特定系統安裝指令 (用於 my_config 網頁安裝)
+# 系統權限擴充：允許 www-data 執行一鍵安裝指令
 # ------------------------------------------------------------
 step_setup_web_sudoers() {
     cat > /etc/sudoers.d/www-data-install <<'EOF'
 www-data ALL=(ALL) NOPASSWD: /usr/bin/apt-get update
 www-data ALL=(ALL) NOPASSWD: /usr/bin/apt-get install -y *
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *
-www-data ALL=(ALL) NOPASSWD: /usr/bin/smbpasswd -a *
-www-data ALL=(ALL) NOPASSWD: /usr/bin/smbpasswd -e *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/smbpasswd *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/pecl *
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/phpenmod *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/bash *
 EOF
     chmod 0440 /etc/sudoers.d/www-data-install
 }

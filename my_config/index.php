@@ -1,71 +1,105 @@
 <?php
 // ============================================================
 // Ubuntu Web Server - Config Page
-// File: index.php
-// Description: Interactive / Info Control Panel (MSSQL & Samba Enabled)
+// File: my_config/index.php
+// Description: Interactive Control Panel with MS SQL & Samba Setup
 // ============================================================
 
 $op_pass = getenv('OP_PASS') ?: 'KXP1AEEuAsaqDWn';
 $mysql_root_pass = getenv('MYSQL_ROOT_PASS') ?: 'KXP1AEEuAsaqDWn';
 
 $message = '';
-$message_type = '';
+$message_type = 'success';
 
 // ------------------------------------------------------------
-// POST 動作處理器：一鍵安裝 MSSQL 驅動 / Samba
+// POST 動作處理器
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
 
     if ($action === 'install_mssql') {
-        // 安裝 Microsoft ODBC 驅動與 PHP sqlsrv / pdo_sqlsrv 擴充
-        $cmd = "sudo ACCEPT_EULA=Y apt-get update && " .
-               "sudo ACCEPT_EULA=Y apt-get install -y unixodbc-dev php8.3-sqlsrv php8.3-pdo-sqlsrv php-pear php-dev && " .
-               "sudo systemctl restart apache2 2>&1";
-        $output = shell_exec($cmd);
-        $message = "MSSQL 驅動程式安裝完成！Apache 已自動重啟。";
-        $message_type = "success";
-    } elseif ($action === 'install_samba') {
-        // 1. 安裝 Samba 套件
-        $cmd1 = "sudo apt-get update && sudo apt-get install -y samba 2>&1";
-        shell_exec($cmd1);
+        // Ubuntu 24.04 微軟官方 ODBC 18 & PECL sqlsrv / pdo_sqlsrv 自動編譯安裝
+        $install_script = <<<'SHELL'
+#!/usr/bin/env bash
+set -e
+export DEBIAN_FRONTEND=noninteractive
 
-        // 2. 寫入 /etc/samba/smb.conf 設定 (分享 /data 為 web)
+# 1. 匯入 Microsoft 官方 Key 與 Ubuntu 24.04 套件庫
+if [ ! -f /etc/apt/sources.list.d/mssql-release.list ]; then
+    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg --yes
+    curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+fi
+
+sudo apt-get update
+sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev php-dev php-pear build-essential
+
+# 2. 透過 PECL 編譯安裝擴充套件
+sudo pecl install sqlsrv pdo_sqlsrv || true
+
+# 3. 寫入 PHP 模組設定並啟用
+echo "extension=sqlsrv.so" | sudo tee /etc/php/8.3/mods-available/sqlsrv.ini
+echo "extension=pdo_sqlsrv.so" | sudo tee /etc/php/8.3/mods-available/pdo_sqlsrv.ini
+
+sudo phpenmod sqlsrv pdo_sqlsrv
+sudo systemctl restart apache2
+SHELL;
+
+        file_put_contents('/tmp/install_mssql.sh', $install_script);
+        chmod('/tmp/install_mssql.sh', 0755);
+        
+        exec("sudo /tmp/install_mssql.sh 2>&1", $output, $return_var);
+        @unlink('/tmp/install_mssql.sh');
+
+        if ($return_var === 0) {
+            $message = "MS SQL (2017+) 驅動程式編譯與安裝成功！Apache 已完成重啟。";
+        } else {
+            $message = "安裝失敗，詳細錯誤訊息: " . implode("<br>", array_slice($output, -6));
+            $message_type = "danger";
+        }
+
+    } elseif ($action === 'install_samba') {
+        // 1. 安裝 Samba
+        shell_exec("sudo apt-get update && sudo apt-get install -y samba 2>&1");
+
+        // 2. 寫入 smb.conf 設定 (分享 /data 全部目錄為 web)
         $smb_conf = <<<CONF
 
 [web]
-   comment = Data Backup and Web Directory
+   comment = Data Central Directory
    path = /data
    browseable = yes
-   read only = no
+   writable = yes
    guest ok = no
    valid users = op
+   force user = op
+   force group = www-data
    create mask = 0775
    directory mask = 0775
+   follow symlinks = yes
+   wide links = yes
 CONF;
-        // 檢查是否已設定過 [web]
-        $current_conf = file_get_contents('/etc/samba/smb.conf');
+
+        $current_conf = @file_get_contents('/etc/samba/smb.conf') ?: '';
         if (strpos($current_conf, '[web]') === false) {
             file_put_contents('/tmp/smb_append.conf', $smb_conf);
             shell_exec("sudo bash -c 'cat /tmp/smb_append.conf >> /etc/samba/smb.conf' && rm -f /tmp/smb_append.conf");
         }
 
-        // 3. 將 op 帳號加入 Samba 並設定密碼
-        $cmd2 = "(echo \"{$op_pass}\"; echo \"{$op_pass}\") | sudo smbpasswd -a -s op && sudo smbpasswd -e op && sudo systemctl restart smbd 2>&1";
-        shell_exec($cmd2);
+        // 3. 設定 Samba op 帳號與密碼
+        $cmd_pass = "printf \"{$op_pass}\n{$op_pass}\n\" | sudo smbpasswd -a -s op && sudo smbpasswd -e op && sudo systemctl restart smbd";
+        shell_exec($cmd_pass);
 
-        $message = "Samba 網路芳鄰安裝成功！已建立 \\\\IP\\web 分享，並同步 op 帳號登入權限。";
-        $message_type = "success";
+        $message = "Samba 網路芳鄰已成功建立！請使用帳號 op 與密碼連線至 \\\\IP\\web。";
     }
 }
 
 // ------------------------------------------------------------
-// 狀態檢測 logic
+// 狀態檢測 Logic
 // ------------------------------------------------------------
 // 1. 檢測 MSSQL (pdo_sqlsrv / sqlsrv) 驅動
 $has_mssql = extension_loaded('pdo_sqlsrv') || extension_loaded('sqlsrv');
 
-// 2. 檢測 Samba 套件安裝狀態與服務執行狀態
+// 2. 檢測 Samba 服務
 $samba_installed = (trim(shell_exec("which smbd 2>/dev/null")) !== '');
 $samba_running = (trim(shell_exec("systemctl is-active smbd 2>/dev/null")) === 'active');
 
@@ -96,7 +130,7 @@ if (is_numeric($apache_limit_req) && $apache_limit_req > 0) {
 
 $apache_log_dir = dirname(trim(shell_exec("grep -Ri 'CustomLog' /etc/apache2/sites-enabled/ 2>/dev/null | head -n1 | awk '{print $2}'") ?: '/data/logs/apache'));
 $php_log_dir = ini_get('error_log') ? dirname(ini_get('error_log')) : '/data/logs/php';
-$server_ip = $_SERVER['SERVER_ADDR'] ?? 'YOUR_SERVER_IP';
+$server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP';
 ?>
 <!DOCTYPE html>
 <html lang="zh-TW">
@@ -116,6 +150,7 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? 'YOUR_SERVER_IP';
         
         .alert { padding: 10px 15px; margin-bottom: 12px; border-radius: 4px; font-weight: bold; font-size: 0.9rem; }
         .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-danger { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
 
         .card-grid { display: flex; flex-wrap: wrap; margin: -6px; }
         .card { flex: 0 0 calc(25% - 12px); margin: 6px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); padding: 12px; border-top: 3px solid #007bff; }
@@ -159,7 +194,7 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? 'YOUR_SERVER_IP';
 </div>
 
 <?php if ($message): ?>
-    <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
+    <div class="alert alert-<?php echo $message_type; ?>"><?php echo $message; ?></div>
 <?php endif; ?>
 
 <div class="card-grid">
@@ -175,9 +210,9 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? 'YOUR_SERVER_IP';
         </ul>
     </div>
 
-    <!-- 2. MS SQL 驅動狀態 (新增需求 1) -->
+    <!-- 2. MS SQL 驅動狀態 -->
     <div class="card <?php echo $has_mssql ? 'success' : 'danger'; ?>">
-        <h2>🗄️ MS SQL (2017) 驅動</h2>
+        <h2>🗄️ MS SQL (2017+) 驅動</h2>
         <ul>
             <li>
                 <span>pdo_sqlsrv 狀態</span>
@@ -190,14 +225,14 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? 'YOUR_SERVER_IP';
             <li><span>支援版本</span> <code>SQL Server 2017+</code></li>
         </ul>
         <?php if (!$has_mssql): ?>
-            <form method="POST" onsubmit="return confirm('確定要透過背景安裝 MS SQL 驅動程式嗎？');">
+            <form method="POST" onsubmit="return confirm('安裝約需 1-2 分鐘進行套件編譯，確定要開始嗎？');">
                 <input type="hidden" name="action" value="install_mssql">
                 <button type="submit" class="btn-install">⚡ 一鍵安裝 MS SQL 驅動</button>
             </form>
         <?php endif; ?>
     </div>
 
-    <!-- 3. Samba 網路芳鄰設定 (新增需求 2) -->
+    <!-- 3. Samba 網路芳鄰設定 -->
     <div class="card <?php echo $samba_installed ? 'success' : 'danger'; ?>">
         <h2>📁 Samba 網路芳鄰</h2>
         <ul>
@@ -213,7 +248,7 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? 'YOUR_SERVER_IP';
             </li>
             <li><span>分享路徑</span> <code class="path-code">/data</code></li>
             <li><span>分享名稱</span> <code>web</code></li>
-            <li><span>連線位置</span> <code class="path-code">\\<?php echo $server_ip; ?>\web</code></li>
+            <li><span>連線位置</span> <code class="path-code">\\<?php echo htmlspecialchars($server_ip); ?>\web</code></li>
         </ul>
         <?php if (!$samba_installed): ?>
             <form method="POST" onsubmit="return confirm('確定要安裝 Samba 並啟用 \\\\IP\\web 網路芳鄰分享嗎？');">
