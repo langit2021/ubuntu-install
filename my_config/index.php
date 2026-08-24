@@ -135,6 +135,109 @@ else
     echo "FAILED" > /tmp/web_install.status
 fi
 SHELL;
+    }elseif ($action === 'install_mariadb') {
+        $mysql_root_pass = getenv('MYSQL_ROOT_PASS') ?: 'KXP1AEEuAsaqDWn';
+        $cmd = <<<SHELL
+#!/usr/bin/env bash
+(
+set -e
+export DEBIAN_FRONTEND=noninteractive
+echo "==> 強制停止舊有 MariaDB 服務並準備 /data/mysql..."
+systemctl stop mariadb 2>/dev/null || true
+
+mkdir -p /data/mysql
+rm -rf /var/lib/mysql/*
+rm -rf /data/mysql/*
+
+echo "==> 安裝 MariaDB 套件..."
+apt-get update && apt-get install -y mariadb-server mariadb-client
+
+systemctl stop mariadb
+if [ -d "/var/lib/mysql" ] && [ -f "/var/lib/mysql/ibdata1" ]; then
+    rsync -av /var/lib/mysql/ /data/mysql/
+fi
+
+sed -i "s|datadir\s*=\s*/var/lib/mysql|datadir = /data/mysql|g" /etc/mysql/mariadb.conf.d/50-server.cnf
+chown -R mysql:mysql /data/mysql
+systemctl enable mariadb
+systemctl start mariadb
+
+echo "==> 設定 MariaDB root 密碼與安全強化..."
+mysql <<EOF
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${mysql_root_pass}';
+DELETE FROM mysql.user WHERE User='';
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+FLUSH PRIVILEGES;
+EOF
+
+echo "==> MariaDB 安裝與 /data/mysql 集中化設定完成！"
+) > /tmp/web_install.log 2>&1
+if [ $? -eq 0 ]; then
+    echo "SUCCESS" > /tmp/web_install.status
+else
+    echo "FAILED" > /tmp/web_install.status
+fi
+SHELL;
+    } elseif ($action === 'install_phpmyadmin') {
+        $mysql_root_pass = getenv('MYSQL_ROOT_PASS') ?: 'KXP1AEEuAsaqDWn';
+        $pma_pass = getenv('PMA_PASS') ?: 'KXP1AEEuAsaqDWn';
+        $cmd = <<<SHELL
+#!/usr/bin/env bash
+(
+set -e
+export DEBIAN_FRONTEND=noninteractive
+echo "==> 預先設定 Debconf 選項..."
+echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections
+echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
+
+echo "==> 安裝 phpMyAdmin 套件..."
+apt-get update && apt-get install -y phpmyadmin
+a2enconf phpmyadmin
+
+if [ -f /etc/phpmyadmin/config.inc.php ]; then
+    if ! grep -q "AllowRoot" /etc/phpmyadmin/config.inc.php; then
+        echo "\$cfg['Servers'][\$i]['AllowRoot'] = TRUE;" >> /etc/phpmyadmin/config.inc.php
+    fi
+fi
+
+echo "==> 建立 phpMyAdmin 控制資料庫與帳號..."
+mysql -u root -p"${mysql_root_pass}" <<EOF
+CREATE DATABASE IF NOT EXISTS phpmyadmin;
+CREATE USER IF NOT EXISTS 'phpmyadmin'@'localhost' IDENTIFIED BY '${pma_pass}';
+ALTER USER 'phpmyadmin'@'localhost' IDENTIFIED BY '${pma_pass}';
+GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
+    mysql --batch -u root -p"${mysql_root_pass}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
+fi
+
+rm -f /etc/phpmyadmin/config-db.php
+cat > /etc/phpmyadmin/config-db.php <<EOF
+<?php
+\$dbuser='phpmyadmin';
+\$dbpass='${pma_pass}';
+\$basepath='';
+\$dbname='phpmyadmin';
+\$dbserver='localhost';
+\$dbport='3306';
+\$dbtype='mysql';
+EOF
+
+chmod 660 /etc/phpmyadmin/config-db.php
+chown root:www-data /etc/phpmyadmin/config-db.php
+systemctl restart apache2
+
+echo "==> phpMyAdmin 安裝與設定完成！"
+) > /tmp/web_install.log 2>&1
+if [ $? -eq 0 ]; then
+    echo "SUCCESS" > /tmp/web_install.status
+else
+    echo "FAILED" > /tmp/web_install.status
+fi
+SHELL;
     }
 
     file_put_contents('/tmp/run_install.sh', $cmd);
