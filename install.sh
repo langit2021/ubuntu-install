@@ -239,84 +239,10 @@ EOF
 run_step "STEP_07_OP_USER" "建立維護帳號 (op) 並配置權限" step_setup_op_user
 
 # ------------------------------------------------------------
-# 8. 重置與安裝 MariaDB，移轉資料目錄至 /data/mysql
+# 8. [移至 Web 控制台] MariaDB 服務
+# 9. [移至 Web 控制台] phpMyAdmin 服務
+# 註：MariaDB 與 phpMyAdmin 已改由 /my_config 控制台提供一鍵部署
 # ------------------------------------------------------------
-step_install_mariadb() {
-    echo "==> 強制停止舊有 MariaDB 服務並徹底清空既有資料檔..."
-    systemctl stop mariadb 2>/dev/null || true
-
-    rm -rf /var/lib/mysql/*
-    rm -rf "${MYSQL_DIR}"/*
-
-    apt-get install -y mariadb-server mariadb-client
-    systemctl enable mariadb
-
-    systemctl stop mariadb
-    if [ -d "/var/lib/mysql" ] && [ -f "/var/lib/mysql/ibdata1" ]; then
-        rsync -av /var/lib/mysql/ "${MYSQL_DIR}/"
-    fi
-    sed -i "s|datadir\s*=\s*/var/lib/mysql|datadir = ${MYSQL_DIR}|g" /etc/mysql/mariadb.conf.d/50-server.cnf
-    chown -R mysql:mysql "${MYSQL_DIR}"
-    systemctl start mariadb
-}
-
-run_step "STEP_08_MARIADB" "清空資料、安裝 MariaDB 並移轉至 /data/mysql" step_install_mariadb
-
-# ------------------------------------------------------------
-# 9. 安裝 phpMyAdmin 與安全性設定
-# ------------------------------------------------------------
-step_install_phpmyadmin() {
-    MYSQL_ROOT_PASS="${MYSQL_ROOT_PASS:-KXP1AEEuAsaqDWn}"
-    PMA_PASS="${PMA_PASS:-KXP1AEEuAsaqDWn}"
-
-    export DEBIAN_FRONTEND=noninteractive
-    echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections
-    echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
-    apt-get install -y phpmyadmin
-
-    a2enconf phpmyadmin
-
-    if [ -f /etc/phpmyadmin/config.inc.php ]; then
-        if ! grep -q "AllowRoot" /etc/phpmyadmin/config.inc.php; then
-            echo "\$cfg['Servers'][\$i]['AllowRoot'] = TRUE;" >> /etc/phpmyadmin/config.inc.php
-        fi
-    fi
-
-    mysql <<EOF
-ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
-DELETE FROM mysql.user WHERE User='';
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-
-CREATE DATABASE IF NOT EXISTS phpmyadmin;
-CREATE USER IF NOT EXISTS 'phpmyadmin'@'localhost' IDENTIFIED BY '${PMA_PASS}';
-ALTER USER 'phpmyadmin'@'localhost' IDENTIFIED BY '${PMA_PASS}';
-GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
-
-FLUSH PRIVILEGES;
-EOF
-
-    if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
-        mysql --batch -u root -p"${MYSQL_ROOT_PASS}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
-    fi
-
-    rm -f /etc/phpmyadmin/config-db.php
-    cat > /etc/phpmyadmin/config-db.php <<EOF
-<?php
-\$dbuser='phpmyadmin';
-\$dbpass='${PMA_PASS}';
-\$basepath='';
-\$dbname='phpmyadmin';
-\$dbserver='localhost';
-\$dbport='3306';
-\$dbtype='mysql';
-EOF
-
-    chmod 660 /etc/phpmyadmin/config-db.php
-    chown root:www-data /etc/phpmyadmin/config-db.php
-}
-
-run_step "STEP_09_PHPMYADMIN" "安裝與配置 phpMyAdmin" step_install_phpmyadmin
 
 # ------------------------------------------------------------
 # 10. 配置 SSL 憑證與 Apache VirtualHost
@@ -460,15 +386,17 @@ EOF
 run_step "STEP_12_BACKUP" "設定每日 03:00 自動備份排程" step_setup_backup
 
 # ------------------------------------------------------------
-# 13. 設定目錄權限與重啟服務
+# 13. 設定目錄權限與重啟服務 
 # ------------------------------------------------------------
 step_permissions_and_restart() {
     chown -R op:www-data "${WEB_ROOT}"
     chmod -R 775 "${WEB_ROOT}"
     find "${WEB_ROOT}" -type d -exec chmod g+s {} +
 
-    chown -R mysql:mysql "${MYSQL_DIR}"
-    chmod -R 770 "${MYSQL_DIR}"
+    if [ -d "${MYSQL_DIR}" ]; then
+        chown -R mysql:mysql "${MYSQL_DIR}" 2>/dev/null || true
+        chmod -R 770 "${MYSQL_DIR}" 2>/dev/null || true
+    fi
 
     chown -R root:op "${DATA_DIR}/backup"
     chmod -R 775 "${DATA_DIR}/backup"
@@ -478,10 +406,12 @@ step_permissions_and_restart() {
 
     apache2ctl configtest
     systemctl restart apache2
-    systemctl restart mariadb
+    
+    # 僅在 MariaDB 服務存在且已安裝時重啟
+    if systemctl is-active --quiet mariadb || systemctl is-enabled --quiet mariadb 2>/dev/null; then
+        systemctl restart mariadb
+    fi
 }
-
-run_step "STEP_13_RESTART" "設定目錄權限與重啟服務" step_permissions_and_restart
 
 # ------------------------------------------------------------
 # 14. 系統權限擴充：允許 www-data 免密碼執行控制台腳本
