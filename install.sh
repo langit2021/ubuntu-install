@@ -277,7 +277,8 @@ run_step "STEP_08_MARIADB" "清空資料、安裝 MariaDB 並移轉至 /data/mys
 # 9. 安裝 phpMyAdmin 與安全性設定
 # ------------------------------------------------------------
 step_install_phpmyadmin() {
-    echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
+    export DEBIAN_FRONTEND=noninteractive
+    echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections
     echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
     apt-get install -y phpmyadmin
 
