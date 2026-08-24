@@ -428,8 +428,9 @@ echo "<p>請確保 GitHub 儲存庫已放置 my_config/index.php 檔案。</p>";
 PHP_EOF
     fi
 
-    chown -R www-data:www-data "${CONFIG_DEST_DIR}"
-    chmod -R 755 "${CONFIG_DEST_DIR}"
+	chown -R op:www-data "${CONFIG_DEST_DIR}"
+	chmod -R 775 "${CONFIG_DEST_DIR}"
+	find "${CONFIG_DEST_DIR}" -type d -exec chmod g+s {} +
 }
 
 run_step "STEP_11_TESTPAGE" "部署測試頁面與 /my_config 控制台頁面" step_deploy_testpage
