@@ -356,6 +356,7 @@ step_configure_ssl() {
         Options FollowSymLinks
         AllowOverride All
         Require all granted
+        DirectoryIndex index.php index.html
     </Directory>
 
     ErrorLog ${LOG_APACHE}/error.log
@@ -381,7 +382,6 @@ EOF
 }
 
 run_step "STEP_10_SSL" "配置 SSL 憑證與 Apache VirtualHost" step_configure_ssl
-
 # ------------------------------------------------------------
 # 11. 部署測試頁面與 /my_config 控制台頁面
 # ------------------------------------------------------------
@@ -406,24 +406,28 @@ step_deploy_testpage() {
 </html>
 EOF
 
-    # 下載獨立的 my_config index.php 頁面
     CONFIG_DEST_DIR="${DATA_DIR}/my_config"
     mkdir -p "${CONFIG_DEST_DIR}"
 
     GIT_CONFIG_URL="https://raw.githubusercontent.com/${GIT_ACCOUNT}/${GIT_PROJECT}/main/my_config/index.php"
 
     echo "==> 自 Git 下載控制台頁面 (index.php)..."
-    if ! curl -sSL "${GIT_CONFIG_URL}" -o "${CONFIG_DEST_DIR}/index.php"; then
-        wget -q "${GIT_CONFIG_URL}" -O "${CONFIG_DEST_DIR}/index.php"
+    # 使用 -f 參數確保 HTTP 錯誤 (404) 時不寫入檔案
+    if ! curl -sSLf "${GIT_CONFIG_URL}" -o "${CONFIG_DEST_DIR}/index.php"; then
+        echo "⚠️ 警告: 自 Git 下載 index.php 失敗 (404 或網路錯誤)，寫入基礎預設頁面..."
+        cat > "${CONFIG_DEST_DIR}/index.php" <<'PHP_EOF'
+<?php
+echo "<h1>/my_config 控制台頁面建置中</h1>";
+echo "<p>請確保 GitHub 儲存庫已放置 my_config/index.php 檔案。</p>";
+PHP_EOF
     fi
 
-    # 設定權限
+    # 設定目錄與檔案權限
     chown -R www-data:www-data "${CONFIG_DEST_DIR}"
     chmod -R 755 "${CONFIG_DEST_DIR}"
 }
 
 run_step "STEP_11_TESTPAGE" "部署測試頁面與 /my_config 控制台頁面" step_deploy_testpage
-
 # ------------------------------------------------------------
 # 12. 設定每日 03:00 自動備份排程
 # ------------------------------------------------------------
