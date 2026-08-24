@@ -478,7 +478,21 @@ step_permissions_and_restart() {
 }
 
 run_step "STEP_13_RESTART" "設定權限並重啟相關服務" step_permissions_and_restart
+# ------------------------------------------------------------
+# 系統權限擴充：允許 www-data 執行特定系統安裝指令 (用於 my_config 網頁安裝)
+# ------------------------------------------------------------
+step_setup_web_sudoers() {
+    cat > /etc/sudoers.d/www-data-install <<'EOF'
+www-data ALL=(ALL) NOPASSWD: /usr/bin/apt-get update
+www-data ALL=(ALL) NOPASSWD: /usr/bin/apt-get install -y *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/smbpasswd -a *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/smbpasswd -e *
+EOF
+    chmod 0440 /etc/sudoers.d/www-data-install
+}
 
+run_step "STEP_WEB_SUDO" "設定 www-data 免密碼 Sudo 權限" step_setup_web_sudoers
 # ------------------------------------------------------------
 # 14. 結算與輸出
 # ------------------------------------------------------------
