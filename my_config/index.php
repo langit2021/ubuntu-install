@@ -51,7 +51,7 @@ if (isset($_GET['api']) && $_GET['api'] === 'stream_log') {
 }
 
 // ------------------------------------------------------------
-// 2. 非同步背景安裝觸發器 (移除內嵌 sudo 以免請求 Terminal 密碼)
+// 2. 非同步背景安裝觸發器 (修復執行流程與權限卡死問題)
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async'])) {
     header('Content-Type: application/json');
@@ -59,9 +59,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async'])) {
     
     @unlink('/tmp/web_install.log');
     @unlink('/tmp/web_install.status');
+    @unlink('/tmp/run_install.sh');
 
     if ($action === 'install_mssql') {
         $cmd = <<<'SHELL'
+#!/usr/bin/env bash
 (
 set -e
 export DEBIAN_FRONTEND=noninteractive
@@ -94,6 +96,7 @@ SHELL;
     } elseif ($action === 'install_samba') {
         $op_pass = getenv('OP_PASS') ?: 'KXP1AEEuAsaqDWn';
         $cmd = <<<SHELL
+#!/usr/bin/env bash
 (
 set -e
 echo "==> 開始安裝 Samba 套件..."
@@ -134,8 +137,9 @@ SHELL;
     }
 
     file_put_contents('/tmp/run_install.sh', $cmd);
-    chmod('/tmp/run_install.sh', 0755);
-    // 統一由外層以 sudo -n (非互動模式) 啟動全權限腳本
+    chmod('/tmp/run_install.sh', 0777);
+    
+    // 背景觸發：利用 sudo -n 免密碼直接調用生成好的 Shell 腳本
     exec("nohup sudo -n /tmp/run_install.sh > /dev/null 2>&1 &");
 
     echo json_encode(['status' => 'started']);

@@ -2,7 +2,7 @@
 
 # ============================================================
 # Ubuntu Web Server Installer
-# Version: 0.5
+# Version: 0.6
 # Target: Ubuntu Server 24.04 LTS
 # ============================================================
 
@@ -10,7 +10,7 @@ set -e
 SECONDS=0
 
 # ------------------------------------------------------------
-# 1. 時間同步與日誌準備 (優先校正時間以確保 Log 檔名正確)
+# 1. 時間同步與日誌準備
 # ------------------------------------------------------------
 step_timezone_and_log() {
     echo "=== 設定系統時區為 Asia/Taipei ==="
@@ -30,7 +30,6 @@ GIT_ACCOUNT=langit2021
 GIT_PROJECT=ubuntu-install
 
 START_TIME=$(date '+%Y%m%d_%H%M')
-START_SEC=$(date +%s)
 LOG_FILE="$(pwd)/install_${START_TIME}.log"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -44,20 +43,18 @@ echo
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="0.5"
 DATA_DIR="/data"
 WEB_ROOT="${DATA_DIR}/www"
 MYSQL_DIR="${DATA_DIR}/mysql"
 LOG_APACHE="${DATA_DIR}/logs/apache"
 LOG_PHP="${DATA_DIR}/logs/php"
-CONFIG_DIR="${WEB_ROOT}/my_config"
 SSL_DIR="/etc/apache2/ssl"
 PROGRESS_FILE="/data/.install_progress"
 
 mkdir -p /data
 
 # ------------------------------------------------------------
-# Checkpoint / 章節狀態檢查機制
+# Checkpoint 檢查機制
 # ------------------------------------------------------------
 is_step_completed() {
     local step_name="$1"
@@ -210,7 +207,7 @@ step_install_php() {
 run_step "STEP_06_PHP" "安裝與設定 PHP 8.3" step_install_php
 
 # ------------------------------------------------------------
-# 7. 建立維護帳號 (op) 與 SFTP / Samba 權限設定
+# 7. 建立維護帳號 (op) 與 SFTP 權限設定
 # ------------------------------------------------------------
 step_setup_op_user() {
     OP_PASS="${OP_PASS:-KXP1AEEuAsaqDWn}"
@@ -390,7 +387,7 @@ EOF
 run_step "STEP_10_SSL" "配置 SSL 憑證與 Apache VirtualHost" step_configure_ssl
 
 # ------------------------------------------------------------
-# 11. 部署測試頁面與 /my_config 控制台頁面
+# 11. 部署測試頁面與 /my_config 控制台頁面 (修正 Samba 覆蓋權限)
 # ------------------------------------------------------------
 step_deploy_testpage() {
     cat > "${WEB_ROOT}/index.php" <<'EOF'
@@ -428,9 +425,10 @@ echo "<p>請確保 GitHub 儲存庫已放置 my_config/index.php 檔案。</p>";
 PHP_EOF
     fi
 
-	chown -R op:www-data "${CONFIG_DEST_DIR}"
-	chmod -R 775 "${CONFIG_DEST_DIR}"
-	find "${CONFIG_DEST_DIR}" -type d -exec chmod g+s {} +
+    # 關鍵修正：將屬權設為 op:www-data，並給予 775 與 sgid，讓 Samba 帳號 (op) 可以自由覆蓋寫入
+    chown -R op:www-data "${CONFIG_DEST_DIR}"
+    chmod -R 775 "${CONFIG_DEST_DIR}"
+    find "${CONFIG_DEST_DIR}" -type d -exec chmod g+s {} +
 }
 
 run_step "STEP_11_TESTPAGE" "部署測試頁面與 /my_config 控制台頁面" step_deploy_testpage
@@ -486,7 +484,7 @@ step_permissions_and_restart() {
 run_step "STEP_13_RESTART" "設定目錄權限與重啟服務" step_permissions_and_restart
 
 # ------------------------------------------------------------
-# 14. 系統權限擴充：允許 www-data 執行一鍵安裝指令
+# 14. 系統權限擴充：允許 www-data 免密碼執行控制台腳本
 # ------------------------------------------------------------
 step_setup_web_sudoers() {
     cat > /etc/sudoers.d/www-data-install <<'EOF'
@@ -497,6 +495,7 @@ www-data ALL=(ALL) NOPASSWD: /usr/bin/smbpasswd *
 www-data ALL=(ALL) NOPASSWD: /usr/bin/pecl *
 www-data ALL=(ALL) NOPASSWD: /usr/sbin/phpenmod *
 www-data ALL=(ALL) NOPASSWD: /usr/bin/bash *
+www-data ALL=(ALL) NOPASSWD: /tmp/run_install.sh
 EOF
     chmod 0440 /etc/sudoers.d/www-data-install
 }
