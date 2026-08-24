@@ -51,7 +51,7 @@ if (isset($_GET['api']) && $_GET['api'] === 'stream_log') {
 }
 
 // ------------------------------------------------------------
-// 2. 非同步背景安裝觸發器
+// 2. 非同步背景安裝觸發器 (移除內嵌 sudo 以免請求 Terminal 密碼)
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async'])) {
     header('Content-Type: application/json');
@@ -67,22 +67,22 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 echo "==> 開始設定 Microsoft 套件源..."
 if [ ! -f /etc/apt/sources.list.d/mssql-release.list ]; then
-    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg --yes
-    curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg --yes
+    curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | tee /etc/apt/sources.list.d/mssql-release.list
 fi
 
 echo "==> 更新套件並安裝編譯依賴 (unixodbc-dev / php-dev)..."
-sudo apt-get update
-sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev php-dev php-pear build-essential
+apt-get update
+ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev php-dev php-pear build-essential
 
 echo "==> 透過 PECL 編譯 sqlsrv / pdo_sqlsrv..."
-sudo pecl install sqlsrv pdo_sqlsrv || true
+pecl install sqlsrv pdo_sqlsrv || true
 
 echo "==> 啟用 PHP 模組並重啟 Apache..."
-echo "extension=sqlsrv.so" | sudo tee /etc/php/8.3/mods-available/sqlsrv.ini
-echo "extension=pdo_sqlsrv.so" | sudo tee /etc/php/8.3/mods-available/pdo_sqlsrv.ini
-sudo phpenmod sqlsrv pdo_sqlsrv
-sudo systemctl restart apache2
+echo "extension=sqlsrv.so" | tee /etc/php/8.3/mods-available/sqlsrv.ini
+echo "extension=pdo_sqlsrv.so" | tee /etc/php/8.3/mods-available/pdo_sqlsrv.ini
+phpenmod sqlsrv pdo_sqlsrv
+systemctl restart apache2
 echo "==> MS SQL 驅動安裝完成！"
 ) > /tmp/web_install.log 2>&1
 if [ $? -eq 0 ]; then
@@ -97,11 +97,11 @@ SHELL;
 (
 set -e
 echo "==> 開始安裝 Samba 套件..."
-sudo apt-get update && sudo apt-get install -y samba
+apt-get update && apt-get install -y samba
 
 echo "==> 配置 /etc/samba/smb.conf ..."
 if ! grep -q '\[web\]' /etc/samba/smb.conf; then
-    sudo bash -c 'cat >> /etc/samba/smb.conf' <<CONF
+    cat >> /etc/samba/smb.conf <<CONF
 
 [web]
    comment = Data Central Directory
@@ -120,9 +120,9 @@ CONF
 fi
 
 echo "==> 設定 op 帳號與 Samba 密碼..."
-printf "${op_pass}\n${op_pass}\n" | sudo smbpasswd -a -s op
-sudo smbpasswd -e op
-sudo systemctl restart smbd
+printf "${op_pass}\n${op_pass}\n" | smbpasswd -a -s op
+smbpasswd -e op
+systemctl restart smbd
 echo "==> Samba 網路芳鄰建置完成！"
 ) > /tmp/web_install.log 2>&1
 if [ $? -eq 0 ]; then
@@ -135,7 +135,8 @@ SHELL;
 
     file_put_contents('/tmp/run_install.sh', $cmd);
     chmod('/tmp/run_install.sh', 0755);
-    exec("nohup /tmp/run_install.sh > /dev/null 2>&1 &");
+    // 統一由外層以 sudo -n (非互動模式) 啟動全權限腳本
+    exec("nohup sudo -n /tmp/run_install.sh > /dev/null 2>&1 &");
 
     echo json_encode(['status' => 'started']);
     exit;
