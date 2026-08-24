@@ -277,6 +277,10 @@ run_step "STEP_08_MARIADB" "清空資料、安裝 MariaDB 並移轉至 /data/mys
 # 9. 安裝 phpMyAdmin 與安全性設定
 # ------------------------------------------------------------
 step_install_phpmyadmin() {
+    # 預設密碼備援，防止變數為空
+    MYSQL_ROOT_PASS="${MYSQL_ROOT_PASS:-KXP1AEEuAsaqDWn}"
+    PMA_PASS="${PMA_PASS:-KXP1AEEuAsaqDWn}"
+
     export DEBIAN_FRONTEND=noninteractive
     echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections
     echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
@@ -305,8 +309,9 @@ GRANT ALL PRIVILEGES ON phpmyadmin.* TO 'phpmyadmin'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
+    # 加上 --batch 避免密碼錯誤時進入互動模式卡住
     if [ -f /usr/share/phpmyadmin/sql/create_tables.sql ]; then
-        mysql -u root -p"${MYSQL_ROOT_PASS}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
+        mysql --batch -u root -p"${MYSQL_ROOT_PASS}" phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql 2>/dev/null || true
     fi
 
     cat > /etc/phpmyadmin/config-db.php <<EOF
