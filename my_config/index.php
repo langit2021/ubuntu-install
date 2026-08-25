@@ -137,13 +137,18 @@ echo "==> MS SQL 驅動安裝完成！"
 ) > /tmp/web_install.log 2>&1
 if [ $? -eq 0 ]; then echo "SUCCESS" > /tmp/web_install.status; else echo "FAILED" > /tmp/web_install.status; fi
 SHELL;
-    } elseif ($action === 'install_samba') {
+   } elseif ($action === 'install_samba') {
         $op_pass = getenv('OP_PASS') ?: 'KXP1AEEuAsaqDWn';
         $cmd = <<<SHELL
 #!/usr/bin/env bash
 (
 set -e
+export DEBIAN_FRONTEND=noninteractive
+
+echo "==> 開始安裝 Samba 套件..."
 apt-get update && apt-get install -y samba
+
+echo "==> 設定 /etc/samba/smb.conf..."
 if ! grep -q '\[web\]' /etc/samba/smb.conf; then
     cat >> /etc/samba/smb.conf <<CONF
 
@@ -162,14 +167,21 @@ if ! grep -q '\[web\]' /etc/samba/smb.conf; then
    wide links = yes
 CONF
 fi
-printf "${op_pass}\n${op_pass}\n" | smbpasswd -a -s op
+
+echo "==> 建立或更新 Samba 使用者 op..."
+# 確保系統 op 帳號存在 (若不存在則建立)
+id -u op >/dev/null 2>&1 || useradd -m -s /bin/bash op
+
+# 使用 -s 靜默模式將密碼經由管道注入 smbpasswd
+(echo "${op_pass}"; echo "${op_pass}") | smbpasswd -s -a op
 smbpasswd -e op
+
+echo "==> 重啟 Samba 服務..."
 systemctl restart smbd
 echo "==> Samba 網路芳鄰建置完成！"
 ) > /tmp/web_install.log 2>&1
 if [ $? -eq 0 ]; then echo "SUCCESS" > /tmp/web_install.status; else echo "FAILED" > /tmp/web_install.status; fi
-SHELL;
-    } elseif ($action === 'install_mariadb') {
+SHELL; elseif ($action === 'install_mariadb') {
         $mysql_root_pass = getenv('MYSQL_ROOT_PASS') ?: 'KXP1AEEuAsaqDWn';
         $cmd = <<<SHELL
 #!/usr/bin/env bash
