@@ -521,6 +521,7 @@ run_step "STEP_WEB_SUDO" "設定 www-data 免密碼 Sudo 權限" step_setup_web_
 # ------------------------------------------------------------
 # 15. 結算與輸出
 # ------------------------------------------------------------
+systemctl restart apache2
 ELAPSED_SEC=$SECONDS
 MINUTES=$((ELAPSED_SEC / 60))
 SECONDS_LEFT=$((ELAPSED_SEC % 60))

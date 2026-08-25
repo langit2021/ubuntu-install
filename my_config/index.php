@@ -46,9 +46,13 @@ if (isset($_GET['api']) && $_GET['api'] === 'stream_log') {
     exit;
 }
 
-// 2. 一鍵更新所有卡片/模組 API
+// 2. 一鍵更新所有卡片/模組 API (修復 state 與 log 寫入)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async']) && $_POST['action_async'] === 'update_all_modules') {
     header('Content-Type: application/json');
+    
+    file_put_contents('/tmp/web_install.log', "==> 開始從 GitHub 下載與更新所有卡片組件...\n");
+    file_put_contents('/tmp/web_install.status', 'RUNNING');
+
     $git_account = "langit2021";
     $git_project = "ubuntu-install";
     
@@ -58,13 +62,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async']) && $_
         'card_pma.php', 'card_paths.php'
     ];
     
+    // 設定 HTTP header 避免被 GitHub 阻擋
+    $opts = [
+        'http' => [
+            'method' => "GET",
+            'header' => "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n"
+        ]
+    ];
+    $context = stream_context_create($opts);
+
+    $success_count = 0;
+    $total_files = count($files);
+
     foreach ($files as $file) {
         $url = "https://raw.githubusercontent.com/{$git_account}/{$git_project}/main/my_config/{$file}";
-        $content = @file_get_contents($url);
+        file_put_contents('/tmp/web_install.log', "正在下載: {$file} ... ", FILE_APPEND);
+        
+        $content = @file_get_contents($url, false, $context);
         if ($content !== false && !empty($content)) {
-            file_put_contents("/data/my_config/{$file}", $content);
+            $dest = "/data/my_config/{$file}";
+            file_put_contents($dest, $content);
+            chmod($dest, 0775);
+            @chown($dest, 'op');
+            file_put_contents('/tmp/web_install.log', "[ OK ]\n", FILE_APPEND);
+            $success_count++;
+        } else {
+            file_put_contents('/tmp/web_install.log', "[ FAILED ]\n", FILE_APPEND);
         }
     }
+
+    if ($success_count === $total_files) {
+        file_put_contents('/tmp/web_install.log', "==> 所有卡片組件更新完成！\n", FILE_APPEND);
+        file_put_contents('/tmp/web_install.status', 'SUCCESS');
+    } else {
+        file_put_contents('/tmp/web_install.log', "==> 部分組件下載失敗 ({$success_count}/{$total_files})\n", FILE_APPEND);
+        file_put_contents('/tmp/web_install.status', 'FAILED');
+    }
+
     echo json_encode(['status' => 'started']);
     exit;
 }
@@ -267,7 +301,12 @@ $server_ip = $_SERVER['SERVER_ADDR'] ?? $_SERVER['HTTP_HOST'] ?? 'YOUR_SERVER_IP
 <body>
 
 <div class="header-bar">
-    <h1>Ubuntu Web Server 系統組態資訊</h1>
+    <div>
+        <h1 style="display:inline-block; margin-right:10px;">Ubuntu Web Server 系統組態資訊</h1>
+        <span style="font-size:0.8rem; color:#6c757d; font-weight:normal;">
+            主頁面版本: <code><?php echo date("Y-m-d H:i:s", filemtime(__FILE__)); ?></code>
+        </span>
+    </div>
     <div class="nav-bar">
         <button onclick="updateAllModules()" class="btn-update">🔄 更新卡片組件</button>
         <a href="/" class="btn-home">🏠 返回首頁</a>
