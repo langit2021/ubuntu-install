@@ -75,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async']) && $_
     $total_files = count($files);
 
     foreach ($files as $file) {
-        $url = "https://raw.githubusercontent.com/{$git_account}/{$git_project}/main/my_config/{$file}";
+        //$url = "https://raw.githubusercontent.com/{$git_account}/{$git_project}/main/my_config/{$file}";
 		$timestamp = time();
 		$url = "https://raw.githubusercontent.com/{$git_account}/{$git_project}/main/my_config/{$file}?v={$timestamp}";
 
