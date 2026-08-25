@@ -181,7 +181,7 @@ systemctl restart smbd
 echo "==> Samba 網路芳鄰建置完成！"
 ) > /tmp/web_install.log 2>&1
 if [ $? -eq 0 ]; then echo "SUCCESS" > /tmp/web_install.status; else echo "FAILED" > /tmp/web_install.status; fi
-SHELL; elseif ($action === 'install_mariadb') {
+   SHELL;} elseif ($action === 'install_mariadb') {
         $mysql_root_pass = getenv('MYSQL_ROOT_PASS') ?: 'KXP1AEEuAsaqDWn';
         $cmd = <<<SHELL
 #!/usr/bin/env bash
