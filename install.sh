@@ -444,7 +444,7 @@ PHP_EOF
     chmod -R 775 "${CONFIG_DEST_DIR}"
     find "${CONFIG_DEST_DIR}" -type d -exec chmod g+s {} +
 }
-
+run_step "STEP_11_DEP_MY_CONFIG" "部署測試頁面與 /my_config 精簡引導頁面" step_deploy_testpage
 # ------------------------------------------------------------
 # 12. 設定每日 03:00 自動備份排程
 # ------------------------------------------------------------
@@ -498,7 +498,7 @@ step_permissions_and_restart() {
         systemctl restart mariadb
     fi
 }
-
+run_step "STEP_13_PERM" "設定目錄權限與重啟服務 " step_permissions_and_restart
 # ------------------------------------------------------------
 # 14. 系統權限擴充：允許 www-data 免密碼執行控制台腳本
 # ------------------------------------------------------------
@@ -521,7 +521,7 @@ run_step "STEP_WEB_SUDO" "設定 www-data 免密碼 Sudo 權限" step_setup_web_
 # ------------------------------------------------------------
 # 15. 結算與輸出
 # ------------------------------------------------------------
-systemctl restart apache2
+
 ELAPSED_SEC=$SECONDS
 MINUTES=$((ELAPSED_SEC / 60))
 SECONDS_LEFT=$((ELAPSED_SEC % 60))
