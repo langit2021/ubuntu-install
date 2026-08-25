@@ -313,7 +313,7 @@ EOF
 run_step "STEP_10_SSL" "配置 SSL 憑證與 Apache VirtualHost" step_configure_ssl
 
 # ------------------------------------------------------------
-# 11. 部署測試頁面與 /my_config 控制台頁面 (修正 Samba 覆蓋權限)
+# 11. 部署測試頁面與 /my_config 精簡引導頁面 (替換原 step_deploy_testpage)
 # ------------------------------------------------------------
 step_deploy_testpage() {
     cat > "${WEB_ROOT}/index.php" <<'EOF'
@@ -324,7 +324,6 @@ step_deploy_testpage() {
     <style>
         .top-bar { background: #333; color: #fff; padding: 10px 20px; font-family: Arial, sans-serif; }
         .top-bar a { color: #5bc0de; text-decoration: none; font-weight: bold; }
-        .top-bar a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -339,25 +338,112 @@ EOF
     CONFIG_DEST_DIR="${DATA_DIR}/my_config"
     mkdir -p "${CONFIG_DEST_DIR}"
 
-    GIT_CONFIG_URL="https://raw.githubusercontent.com/${GIT_ACCOUNT}/${GIT_PROJECT}/main/my_config/index.php"
-
-    echo "==> 自 Git 下載控制台頁面 (index.php)..."
-    if ! curl -sSLf "${GIT_CONFIG_URL}" -o "${CONFIG_DEST_DIR}/index.php"; then
-        echo "⚠️ 警告: 自 Git 下載 index.php 失敗 (404 或網路錯誤)，寫入基礎預設頁面..."
-        cat > "${CONFIG_DEST_DIR}/index.php" <<'PHP_EOF'
+    # 寫入初次安裝精簡版引導頁 (簡潔架構，僅保留一鍵掛載/更新功能)
+    cat > "${CONFIG_DEST_DIR}/index.php" <<'PHP_EOF'
 <?php
-echo "<h1>/my_config 控制台頁面建置中</h1>";
-echo "<p>請確保 GitHub 儲存庫已放置 my_config/index.php 檔案。</p>";
-PHP_EOF
-    fi
+$git_account = "langit2021";
+$git_project = "ubuntu-install";
 
-    # 關鍵修正：將屬權設為 op:www-data，並給予 775 與 sgid，讓 Samba 帳號 (op) 可以自由覆蓋寫入
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'mount_modules') {
+    header('Content-Type: application/json');
+    
+    // 模組檔案清單
+    $files = [
+        'index.php',
+        'card_credentials.php',
+        'card_mssql.php',
+        'card_samba.php',
+        'card_backup.php',
+        'card_apache.php',
+        'card_php.php',
+        'card_mariadb.php',
+        'card_pma.php',
+        'card_paths.php'
+    ];
+    
+    $success = true;
+    $errors = [];
+
+    foreach ($files as $file) {
+        $url = "https://raw.githubusercontent.com/{$git_account}/{$git_project}/main/my_config/{$file}";
+        $dest = "/data/my_config/{$file}";
+        $content = @file_get_contents($url);
+        
+        if ($content !== false && !empty($content)) {
+            file_put_contents($dest, $content);
+            chmod($dest, 0775);
+            chown($dest, 'op');
+        } else {
+            $success = false;
+            $errors[] = "無法下載 {$file}";
+        }
+    }
+
+    if ($success) {
+        echo json_encode(['status' => 'success', 'message' => '所有控制台模組卡片已成功掛載與更新！']);
+    } else {
+        echo json_encode(['status' => 'error', 'message' => implode(', ', $errors)]);
+    }
+    exit;
+}
+?>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>控制台模組掛載引導</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #f4f6f9; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .setup-card { background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; max-width: 450px; width: 100%; }
+        h2 { margin-top: 0; color: #1a252f; }
+        p { color: #666; font-size: 0.95rem; line-height: 1.5; }
+        .btn-mount { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 1rem; font-weight: bold; border-radius: 5px; cursor: pointer; transition: background 0.2s; width: 100%; margin-top: 15px; }
+        .btn-mount:hover { background: #0056b3; }
+        #msg { margin-top: 15px; font-weight: bold; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <div class="setup-card">
+        <h2>🚀 控制台未初始化</h2>
+        <p>當前系統處於初始狀態。點擊下方按鈕將自動從 GitHub 下載最新版控制台主結構檔與 8 個獨立卡片組件。</p>
+        <button class="btn-mount" onclick="mountModules()">⚡ 一鍵掛載與更新控制台模組</button>
+        <div id="msg"></div>
+    </div>
+    <script>
+    function mountModules() {
+        const msg = document.getElementById('msg');
+        msg.style.color = '#007bff';
+        msg.innerText = '⏳ 正在從 GitHub 下載與掛載卡片組件...';
+        
+        const fd = new FormData();
+        fd.append('action', 'mount_modules');
+        
+        fetch('index.php', { method: 'POST', body: fd })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    msg.style.color = '#28a745';
+                    msg.innerText = data.message + ' 即將自動重新整理...';
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    msg.style.color = '#dc3545';
+                    msg.innerText = '❌ ' + data.message;
+                }
+            })
+            .catch(() => {
+                msg.style.color = '#dc3545';
+                msg.innerText = '❌ 下載發生錯誤，請檢查網路連線或 GitHub 檔案是否存在。';
+            });
+    }
+    </script>
+</body>
+</html>
+PHP_EOF
+
     chown -R op:www-data "${CONFIG_DEST_DIR}"
     chmod -R 775 "${CONFIG_DEST_DIR}"
     find "${CONFIG_DEST_DIR}" -type d -exec chmod g+s {} +
 }
-
-run_step "STEP_11_TESTPAGE" "部署測試頁面與 /my_config 控制台頁面" step_deploy_testpage
 
 # ------------------------------------------------------------
 # 12. 設定每日 03:00 自動備份排程
