@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_async']) && $_
 
     foreach ($files as $file) {
         $url = "https://raw.githubusercontent.com/{$git_account}/{$git_project}/main/my_config/{$file}";
-		@url = "https://raw.githubusercontent.com/${git_account}/${git_project}/main/my_config/${file}?v=$(date +%s)";
+		$url = "https://raw.githubusercontent.com/${git_account}/${git_project}/main/my_config/${file}?v=$(date +%s)";
 
         file_put_contents('/tmp/web_install.log', "正在下載: {$file} ... ", FILE_APPEND);
         
