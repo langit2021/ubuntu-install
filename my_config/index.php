@@ -136,8 +136,7 @@ systemctl restart apache2
 echo "==> MS SQL 驅動安裝完成！"
 ) > /tmp/web_install.log 2>&1
 if [ $? -eq 0 ]; then echo "SUCCESS" > /tmp/web_install.status; else echo "FAILED" > /tmp/web_install.status; fi
-SHELL;
-   } elseif ($action === 'install_samba') {
+SHELL;} elseif ($action === 'install_samba') {
         $op_pass = getenv('OP_PASS') ?: 'KXP1AEEuAsaqDWn';
         $cmd = <<<SHELL
 #!/usr/bin/env bash
