@@ -140,7 +140,7 @@ step_install_base() {
 
     systemctl stop unattended-upgrades 2>/dev/null || true
 
-    sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
+    #sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null
     apt-get update
     apt-get install -y \
         iputils-ping \
